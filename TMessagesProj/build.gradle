@@ -181,6 +181,7 @@ android {
                 ndk.abiFilters.addAll(pluginAbis)
             }
             externalNativeBuild.cmake.arguments '-DENABLE_PLUGINS=ON'
+            externalNativeBuild.cmake.targets 'aliuhook'
             proguardFiles 'proguard-plugin-rules.pro'
         }
     }
