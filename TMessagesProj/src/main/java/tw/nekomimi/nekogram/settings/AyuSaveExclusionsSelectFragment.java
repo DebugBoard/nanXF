@@ -277,6 +277,7 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
         root.setFocusableInTouchMode(true);
         root.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
         searchField = new FragmentSearchField(context, resourceProvider);
+        searchField.editText.setTextIsSelectable(true);
         searchField.setHintText(getString(R.string.SearchForChats), false);
         searchField.editText.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         searchField.editText.setOnEditorActionListener((view, actionId, event) -> {
@@ -339,6 +340,11 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
                 }
             }
         };
+        spansContainer.setOnClickListener(view -> {
+            cancelDeletingSpan();
+            searchField.editText.requestFocus();
+            AndroidUtilities.showKeyboard(searchField.editText);
+        });
         spansContainer.setDelegate(height -> selectorHeight.animateTo(Math.min(height, maxSize)));
         spansContainer.getSpansContainer().setOnClickListener(view -> {
             cancelDeletingSpan();
