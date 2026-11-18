@@ -46,6 +46,7 @@ import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Adapters.SearchAdapterHelper;
 import org.telegram.ui.Cells.GraySectionCell;
+import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.ColoredImageSpan;
 import org.telegram.ui.Components.CubicBezierInterpolator;
 import org.telegram.ui.Components.FlickerLoadingView;
@@ -277,8 +278,7 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
         root.setFocusableInTouchMode(true);
         root.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
         searchField = new FragmentSearchField(context, resourceProvider);
-        searchField.editText.setTextIsSelectable(true);
-        searchField.setHintText(getString(R.string.SearchForChats), false);
+        searchField.editText.setHint(getString(R.string.SearchForChats));
         searchField.editText.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         searchField.editText.setOnEditorActionListener((view, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_DONE) {
@@ -317,7 +317,17 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
         });
         spansContainer = new FragmentSpansContainer(context, currentAccount) {
             @Override
+            public boolean dispatchTouchEvent(MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN && event.getY() >= visibleSelectorHeight()) {
+                    return false;
+                }
+                return super.dispatchTouchEvent(event);
+            }
+
+            @Override
             public void removeSpan(GroupCreateSpan span) {
+                span.setOnLongClickListener(null);
+                span.setLongClickable(false);
                 if (!syncingSpans) {
                     Object key = span.getTag();
                     if (key instanceof String) {
@@ -340,17 +350,14 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
                 }
             }
         };
-        spansContainer.setOnClickListener(view -> {
+        View.OnClickListener focusSearch = view -> {
             cancelDeletingSpan();
             searchField.editText.requestFocus();
             AndroidUtilities.showKeyboard(searchField.editText);
-        });
+        };
+        spansContainer.setOnClickListener(focusSearch);
         spansContainer.setDelegate(height -> selectorHeight.animateTo(Math.min(height, maxSize)));
-        spansContainer.getSpansContainer().setOnClickListener(view -> {
-            cancelDeletingSpan();
-            searchField.editText.requestFocus();
-            AndroidUtilities.showKeyboard(searchField.editText);
-        });
+        spansContainer.getSpansContainer().setOnClickListener(focusSearch);
         FlickerLoadingView loading = new FlickerLoadingView(context);
         loading.setViewType(FlickerLoadingView.USERS_TYPE);
         loading.showDate(false);
@@ -393,6 +400,12 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
                 }
             }
             checkVisibleRows();
+        });
+        listView.setOnItemLongClickListener((view, position) -> {
+            if (!(view.getTag() instanceof Item item) || item.type == TYPE_HEADER) {
+                return false;
+            }
+            return copyName(item.type == TYPE_CATEGORY ? item.category.getTitle() : item.entry.name);
         });
         listView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
@@ -656,6 +669,15 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
         }
     }
 
+    private boolean copyName(String name) {
+        if (TextUtils.isEmpty(name) || !AndroidUtilities.addToClipboard(name)) {
+            return false;
+        }
+        cancelDeletingSpan();
+        BulletinFactory.of(this).createCopyBulletin(getString(R.string.TextCopied)).show();
+        return true;
+    }
+
     private void syncSpans(boolean refreshAvatars) {
         if (spansContainer == null || viewContext == null) {
             return;
@@ -668,6 +690,7 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
                     span = new AyuSaveExclusionSpan(viewContext, category, resourceProvider);
                     span.setTag(category);
                     span.setOnClickListener(this);
+                    span.setOnLongClickListener(view -> copyName(category.getTitle()));
                     categorySpans.put(category.flag, span);
                     spansContainer.addSpan(span);
                 } else if ((flags & category.flag) == 0 && span != null) {
@@ -697,6 +720,7 @@ public class AyuSaveExclusionsSelectFragment extends BaseFragment implements Vie
                 GroupCreateSpan span = new AyuSaveExclusionSpan(viewContext, avatarPeer, entry.name, entry.secret, resourceProvider);
                 span.setTag(key);
                 span.setOnClickListener(this);
+                span.setOnLongClickListener(view -> copyName(entry.name));
                 peerSpans.put(key, span);
                 spanPeers.put(key, avatarPeer);
                 spanNames.put(key, entry.name);
