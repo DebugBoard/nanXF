@@ -6700,6 +6700,24 @@ public class Theme {
         checkAutoNightThemeConditions(false);
     }
 
+    // app UI went to background: the listener drops events anyway, so don't wake the main thread for them;
+    // checkAutoNightThemeConditions() re-registers on resume
+    public static void pauseAutoNightSensor() {
+        if (lightSensorRegistered) {
+            try {
+                if (sensorManager != null) {
+                    sensorManager.unregisterListener(ambientSensorListener, lightSensor);
+                }
+            } catch (Exception e) {
+                FileLog.e(e);
+            }
+            lightSensorRegistered = false;
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("light sensor paused");
+            }
+        }
+    }
+
     public static void cancelAutoNightThemeCallbacks() {
         if (selectedAutoNightType != AUTO_NIGHT_TYPE_AUTOMATIC) {
             if (switchNightRunnableScheduled) {

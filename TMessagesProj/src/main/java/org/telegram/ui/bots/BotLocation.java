@@ -413,14 +413,32 @@ public class BotLocation {
 
         try {
             final LocationListener[] listener = new LocationListener[1];
+            final Runnable[] timeout = new Runnable[1];
+            final boolean[] done = new boolean[1];
             listener[0] = new LocationListener() {
                 @Override
                 public void onLocationChanged(@NonNull Location location) {
+                    if (done[0]) return;
+                    done[0] = true;
+                    if (timeout[0] != null) {
+                        AndroidUtilities.cancelRunOnUIThread(timeout[0]);
+                    }
                     lm.removeUpdates(listener[0]);
                     whenDone.run(locationObject(location));
                 }
             };
+            timeout[0] = () -> {
+                if (done[0]) return;
+                done[0] = true;
+                try {
+                    lm.removeUpdates(listener[0]);
+                } catch (Exception e) {
+                    FileLog.e(e);
+                }
+                whenDone.run(locationObject(null));
+            };
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1, 0, listener[0]);
+            AndroidUtilities.runOnUIThread(timeout[0], 30000);
         } catch (Exception e) {
             FileLog.e(e);
             whenDone.run(locationObject(null));

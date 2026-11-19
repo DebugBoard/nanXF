@@ -10,6 +10,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.util.Consumer;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.FusedLocationProviderClient;
@@ -27,6 +29,7 @@ import java.util.HashMap;
 public class GoogleLocationProvider implements ILocationServiceProvider {
     private FusedLocationProviderClient locationProviderClient;
     private SettingsClient settingsClient;
+    private Boolean hasServices;
     // the client removes updates by the callback instance, so keep the one registered for each listener
     private final HashMap<ILocationListener, LocationCallback> callbacks = new HashMap<>();
 
@@ -117,7 +120,15 @@ public class GoogleLocationProvider implements ILocationServiceProvider {
 
     @Override
     public boolean checkServices() {
-        return PushListenerController.getProvider().hasServices();
+        // depends on Google Play Services only, not on the selected push provider
+        if (hasServices == null) {
+            try {
+                hasServices = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(ApplicationLoader.applicationContext) == ConnectionResult.SUCCESS;
+            } catch (Throwable e) {
+                hasServices = false;
+            }
+        }
+        return hasServices;
     }
 
     public final static class GoogleLocationRequest implements ILocationRequest {
