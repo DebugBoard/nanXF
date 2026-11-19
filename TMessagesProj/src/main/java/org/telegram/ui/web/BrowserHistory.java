@@ -142,13 +142,7 @@ public class BrowserHistory {
                 }
 
                 final long count = history.size();
-                SerializedData astream = new SerializedData(true);
-                astream.writeInt64(count);
-                for (BrowserHistory.Entry e : history) {
-                    e.serializeToStream(astream);
-                }
-
-                final SerializedData stream = new SerializedData(astream.length());
+                final SerializedData stream = new SerializedData();
                 stream.writeInt64(count);
                 for (BrowserHistory.Entry e : history) {
                     e.serializeToStream(stream);

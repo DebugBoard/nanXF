@@ -417,15 +417,24 @@ public class RecentDialogsSidebarView extends FrameLayout implements Notificatio
                 TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(dialogId);
                 avatarDrawable.setInfo(currentAccount, user);
                 imageView.setForUserOrChat(user, avatarDrawable);
-                nameTextView.setText(user != null ? UserObject.getFirstName(user) : "");
+                setNameIfChanged(user != null ? UserObject.getFirstName(user) : "");
             } else {
                 TLRPC.Chat chat = MessagesController.getInstance(currentAccount).getChat(-dialogId);
                 avatarDrawable.setInfo(currentAccount, chat);
                 imageView.setForUserOrChat(chat, avatarDrawable);
-                nameTextView.setText(chat != null ? chat.title : "");
+                setNameIfChanged(chat != null ? chat.title : "");
             }
             updateUnreadCount();
             invalidate();
+        }
+
+        private String lastName;
+
+        private void setNameIfChanged(String name) {
+            if (!TextUtils.equals(name, lastName)) {
+                lastName = name;
+                nameTextView.setText(name);
+            }
         }
 
         private void updateUnreadCount() {

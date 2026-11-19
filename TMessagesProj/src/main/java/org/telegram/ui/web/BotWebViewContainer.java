@@ -5327,8 +5327,8 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
                     botWebViewContainer.delegate.onWebAppBackgroundChanged(false, meta.backgroundColor);
                     lastBackgroundColorGot = true;
                 }
-                if (meta.favicon != null) {
-                    botWebViewContainer.onFaviconChanged(lastFavicon = meta.favicon);
+                if (meta.getFavicon() != null) {
+                    botWebViewContainer.onFaviconChanged(lastFavicon = meta.getFavicon());
                     lastFaviconGot = true;
                 }
                 if (!TextUtils.isEmpty(meta.sitename)) {

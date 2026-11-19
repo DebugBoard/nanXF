@@ -1840,6 +1840,21 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
 
     private AnimatedFloat summaryCollapseAnimatedFloat = new AnimatedFloat(this, 350, CubicBezierInterpolator.EASE_OUT_QUINT);
     private Paint summaryCollapseGradientPaint;
+    private final Path summaryArrowPath = new Path();
+    private final Paint summaryArrowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final android.graphics.Matrix summaryGradientMatrix = new android.graphics.Matrix();
+    private LinearGradient summaryCollapseGradient;
+    private int summaryCollapseGradientColor, summaryCollapseGradientHeight;
+    private static final SparseArray<PorterDuffColorFilter> forwardsFilters = new SparseArray<>();
+    private static PorterDuffColorFilter getForwardsFilter(int color) {
+        PorterDuffColorFilter filter = forwardsFilters.get(color);
+        if (filter == null) {
+            if (forwardsFilters.size() > 16) forwardsFilters.clear(); // alpha animations can vary the colour
+            filter = new PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN);
+            forwardsFilters.put(color, filter);
+        }
+        return filter;
+    }
     private boolean summaryCollapsed = true;
     private long lastSummaryMessageId = 0;
 
@@ -21124,12 +21139,13 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                 float arrowSize = dp(5);
                 canvas.save();
                 canvas.rotate(lerp(0, 180, collapseProgress), arrowX, arrowY);
-                Path arrowPath = new Path();
+                Path arrowPath = summaryArrowPath;
+                arrowPath.rewind();
                 arrowPath.moveTo(arrowX - arrowSize, arrowY - arrowSize / 2f);
                 arrowPath.lineTo(arrowX, arrowY + arrowSize / 2f);
                 arrowPath.lineTo(arrowX + arrowSize, arrowY - arrowSize / 2f);
                 arrowPath.close();
-                Paint arrowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                Paint arrowPaint = summaryArrowPaint;
                 arrowPaint.setColor(textColor);
                 arrowPaint.setAlpha((int) (0xFF * summaryAlpha));
                 canvas.drawPath(arrowPath, arrowPaint);
@@ -21150,7 +21166,18 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
                         if (currentMessageObject.isOutOwner()) {
                             bgColor = getThemedColor(Theme.key_chat_outBubble);
                         }
-                        summaryCollapseGradientPaint.setShader(new LinearGradient(0, clipBottom - dp(16), 0, clipBottom, bgColor, Color.TRANSPARENT, Shader.TileMode.CLAMP));
+                        int gradientHeight = dp(16);
+                        if (summaryCollapseGradient == null || summaryCollapseGradientColor != bgColor || summaryCollapseGradientHeight != gradientHeight) {
+                            summaryCollapseGradient = new LinearGradient(0, 0, 0, gradientHeight, bgColor, Color.TRANSPARENT, Shader.TileMode.CLAMP);
+                            summaryCollapseGradientColor = bgColor;
+                            summaryCollapseGradientHeight = gradientHeight;
+                            summaryCollapseGradientPaint.setShader(summaryCollapseGradient);
+                        }
+                        summaryGradientMatrix.setTranslate(0, clipBottom - gradientHeight);
+                        summaryCollapseGradient.setLocalMatrix(summaryGradientMatrix);
+                        if (summaryCollapseGradientPaint.getShader() != summaryCollapseGradient) {
+                            summaryCollapseGradientPaint.setShader(summaryCollapseGradient);
+                        }
                         summaryCollapseGradientPaint.setAlpha((int) (0xFF * summaryAlpha * collapseProgress));
                         canvas.drawRect(summarySelectorRect.left, clipBottom - dp(16), summarySelectorRect.right, clipBottom, summaryCollapseGradientPaint);
                     }
@@ -22988,7 +23015,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             float fw = 0;
             if (forwardsDrawable != null) {
                 int color = Theme.chat_timePaint.getColor();
-                forwardsDrawable.setColorFilter(new PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN));
+                forwardsDrawable.setColorFilter(getForwardsFilter(color));
                 fw = setDrawableBounds(forwardsDrawable, forwardsX, timeY + dp(0.5f), Theme.chat_timePaint.getTextSize());
                 if (useScale) {
                     canvas.save();

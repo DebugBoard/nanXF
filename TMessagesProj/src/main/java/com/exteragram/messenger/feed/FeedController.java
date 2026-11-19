@@ -8,6 +8,7 @@ import androidx.collection.LongSparseArray;
 import com.exteragram.messenger.ExteraConfig;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.ChatObject;
 import org.telegram.messenger.DialogObject;
 import org.telegram.messenger.MessageObject;
@@ -39,6 +40,7 @@ public class FeedController implements NotificationCenter.NotificationCenterDele
     private final int closedRefreshGuid;
     private final Runnable closedRefreshRunnable;
     private boolean closedRefreshScheduled;
+    private boolean closedRefreshDeferred;
     private int configGeneration;
     public final int currentAccount;
     private SavedScrollPosition drawerScrollPosition;
@@ -181,6 +183,7 @@ public class FeedController implements NotificationCenter.NotificationCenterDele
         if (updated > 1) {
             return;
         }
+        closedRefreshDeferred = false;
         if (closedRefreshScheduled) {
             AndroidUtilities.cancelRunOnUIThread(closedRefreshRunnable);
             closedRefreshScheduled = false;
@@ -1029,6 +1032,18 @@ public class FeedController implements NotificationCenter.NotificationCenterDele
         if (isUiActive() || loadingNewer || store.isEmpty() || store.getNewestCursor().isEmpty()) {
             return;
         }
+        if (ApplicationLoader.mainInterfacePaused) {
+            // app not visible: refresh once on resume instead
+            closedRefreshDeferred = true;
+            return;
+        }
         loadNewer(closedRefreshGuid, 0);
+    }
+
+    public void onAppResumed() {
+        if (closedRefreshDeferred) {
+            closedRefreshDeferred = false;
+            scheduleClosedRefresh();
+        }
     }
 }
