@@ -4852,7 +4852,7 @@ public class DialogCell extends BaseCell implements StoriesListPlaceProvider.Ava
                 params.drawSegments = false;
                 params.animate = false;
                 params.isDrawingMiniUserProfile = true;
-                params.originalAvatarRect = new RectF(cLeft, cTop, cLeft + dp(18), cTop + dp(18));
+                params.originalAvatarRect.set(cLeft, cTop, cLeft + dp(18), cTop + dp(18));
 
                 boolean animateAvatar = updateHelper.typingProgres > 0 && (!SharedConfig.useThreeLinesLayout || hasTags());
                 if (animateAvatar) {

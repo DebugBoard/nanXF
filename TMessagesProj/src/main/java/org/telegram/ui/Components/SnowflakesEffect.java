@@ -21,6 +21,7 @@ import androidx.core.graphics.ColorUtils;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LiteMode;
 import org.telegram.messenger.Utilities;
+import org.telegram.messenger.utils.Choreographer60FpsContent;
 import org.telegram.ui.ActionBar.Theme;
 
 import java.util.ArrayList;
@@ -243,7 +244,13 @@ public class SnowflakesEffect {
         long dt = Math.min(17, newTime - lastAnimationTime);
         updateParticles(dt);
         lastAnimationTime = newTime;
-        parent.invalidate();
+        if (viewType == 1) {
+            // Chat wallpaper snow: cap at 60 fps (shared vsync batch). Motion is time based and the
+            // 300 particle cap is reached at either rate, so it looks the same on 90/120 Hz screens.
+            Choreographer60FpsContent.getInstance().postInvalidateView(parent);
+        } else {
+            parent.invalidate();
+        }
     }
 
 

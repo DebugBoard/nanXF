@@ -1508,6 +1508,8 @@ public class SimpleActionBar extends FrameLayout implements FactorAnimator.Targe
             }
         }
 
+        private final RectF badgeRect = new RectF();
+
         @Override
         protected void onDraw(@NonNull Canvas canvas) {
             final float cx = getWidth() / 2f, cy = getHeight() / 2f;
@@ -1523,8 +1525,8 @@ public class SimpleActionBar extends FrameLayout implements FactorAnimator.Targe
             }
             if (unreadLayout != null && unreadCount > 0 && NekoConfig.unreadBadgeOnBackButton.Bool() && !actionModeVisible) {
                 int countLeft = getWidth() - unreadLayout.getWidth() - dp(9);
-                RectF badge = new RectF(countLeft - dp(5.5f), 0, countLeft + unreadLayout.getWidth() + dp(5.5f), dp(23));
-                canvas.drawRoundRect(badge, dp(11.5f), dp(11.5f), Theme.dialogs_countPaint);
+                badgeRect.set(countLeft - dp(5.5f), 0, countLeft + unreadLayout.getWidth() + dp(5.5f), dp(23));
+                canvas.drawRoundRect(badgeRect, dp(11.5f), dp(11.5f), Theme.dialogs_countPaint);
                 canvas.save();
                 canvas.translate(countLeft, dp(4));
                 unreadLayout.draw(canvas);
