@@ -3995,6 +3995,7 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
             super(context);
             this.bot = bot;
             d("created new webview " + this);
+            WebViewTimers.register(this);
 
             setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
@@ -5247,6 +5248,7 @@ public abstract class BotWebViewContainer extends FrameLayout implements Notific
         @Override
         public void destroy() {
             d("destroy");
+            WebViewTimers.unregister(this);
             super.destroy();
         }
 
