@@ -15,6 +15,7 @@ import android.system.OsConstants;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import androidx.media3.common.C;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DataSpec;
 
@@ -133,6 +134,8 @@ public class MediaStreamingProvider extends ContentProvider {
         private long size;
         private final DataSource dataSource;
         private final DataSpec.Builder dataSpecBuilder;
+        private boolean isOpen;
+        private long openPosition = -1;
 
         public ProxyFileDescriptorCallback(Uri uri) {
             var tgUri = uri.buildUpon().scheme("tg").build();
@@ -148,19 +151,45 @@ public class MediaStreamingProvider extends ContentProvider {
         }
 
         @Override
-        public int onRead(long offset, int size, byte[] data) throws ErrnoException {
+        public synchronized int onRead(long offset, int size, byte[] data) throws ErrnoException {
             try {
-                dataSpecBuilder.setPosition(offset);
-                dataSpecBuilder.setLength(size);
-
-                dataSource.open(dataSpecBuilder.build());
-                var bytesRead = dataSource.read(data, 0, size);
-                dataSource.close();
-
-                return bytesRead;
+                if (size <= 0) {
+                    return 0;
+                }
+                if (!isOpen || offset != openPosition) {
+                    closeDataSource();
+                    dataSpecBuilder.setPosition(offset);
+                    dataSpecBuilder.setLength(C.LENGTH_UNSET);
+                    dataSource.open(dataSpecBuilder.build());
+                    isOpen = true;
+                    openPosition = offset;
+                }
+                int total = 0;
+                while (total < size) {
+                    int read = dataSource.read(data, total, size - total);
+                    if (read == C.RESULT_END_OF_INPUT) {
+                        break;
+                    }
+                    total += read;
+                }
+                openPosition = offset + total;
+                return total;
             } catch (IOException e) {
                 FileLog.e(e);
+                closeDataSource();
                 throw new ErrnoException("onRead", OsConstants.EBADF);
+            }
+        }
+
+        private void closeDataSource() {
+            if (isOpen) {
+                isOpen = false;
+                openPosition = -1;
+                try {
+                    dataSource.close();
+                } catch (IOException e) {
+                    FileLog.e(e);
+                }
             }
         }
 
@@ -180,8 +209,8 @@ public class MediaStreamingProvider extends ContentProvider {
         }
 
         @Override
-        public void onRelease() {
-
+        public synchronized void onRelease() {
+            closeDataSource();
         }
     }
 }

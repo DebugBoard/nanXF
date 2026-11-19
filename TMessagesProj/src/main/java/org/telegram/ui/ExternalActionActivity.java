@@ -30,6 +30,7 @@ import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.MediaController;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
@@ -533,6 +534,8 @@ public class ExternalActionActivity extends Activity implements INavigationLayou
             layersActionBarLayout.onResume();
         }
         ApplicationLoader.externalInterfacePaused = false;
+        MediaController.checkGallery();
+        MediaController.getInstance().onInterfaceResumed();
         onPasscodeResume();
         if (passcodeView.getVisibility() != View.VISIBLE) {
             actionBarLayout.onResume();

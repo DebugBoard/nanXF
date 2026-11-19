@@ -10136,6 +10136,11 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                 return;
             }
             final NowPlayingDTO trackDto = finalDto;
+            if (nowPlayingCardData != null && NowPlayingCardData.sameDisplayedTrack(nowPlayingCardData.getNowPlayingDTO(), trackDto)) {
+                // same track as on screen: skip re-decoding the cover and re-running Palette
+                scheduleNowPlayingPolling();
+                return;
+            }
             NowPlayingCardData.create(trackDto, cardData -> {
                 if (requestId != nowPlayingRequestId) return;
                 if (cardData != null && cardData.getCoverBitmap() == null
