@@ -189,6 +189,12 @@ int ConnectionsManager::callEvents(int64_t now) {
     if (!networkPaused) {
         return 1000;
     }
+    if (!pushConnectionEnabled) {
+        // Paused without a push connection: nothing below is time-driven. Resume, new requests,
+        // network changes and push toggles all interrupt epoll_wait via wakeup(), and socket
+        // readiness wakes it too, so only poll at 1 Hz while sockets need timeout checks.
+        return activeConnections.empty() ? 60000 : 1000;
+    }
     auto timeToPushPing = (int32_t) ((sendingPushPing ? 30000 : nextPingTimeOffset) - llabs(now - lastPushPingTime));
     if (timeToPushPing <= 0) {
         return 1000;
@@ -219,7 +225,16 @@ void ConnectionsManager::checkPendingTasks() {
 
 void ConnectionsManager::select() {
     checkPendingTasks();
-    int eventsCount = epoll_wait(epolFd, epollEvents, 128, callEvents(getCurrentTimeMonotonicMillis()));
+    int64_t waitStart = getCurrentTimeMonotonicMillis();
+    int waitTimeout = callEvents(waitStart);
+    if (onUpdatePending && !networkPaused) {
+        int64_t untilUpdate = lastOnUpdateTime + ON_UPDATE_MIN_INTERVAL_MS - waitStart;
+        int updateTimeout = untilUpdate <= 0 ? 0 : (int) untilUpdate;
+        if (updateTimeout < waitTimeout) {
+            waitTimeout = updateTimeout;
+        }
+    }
+    int eventsCount = epoll_wait(epolFd, epollEvents, 128, waitTimeout);
     checkPendingTasks();
     int64_t now = getCurrentTimeMonotonicMillis();
     callEvents(now);
@@ -305,7 +320,15 @@ void ConnectionsManager::select() {
     }
 
     if (delegate != nullptr) {
-        delegate->onUpdate(instanceNum);
+        // updateTimerProc logic is all thresholded at >= 1 s, so don't run it on every socket
+        // event; a skipped tick is delivered at most ON_UPDATE_MIN_INTERVAL_MS later.
+        if (lastOnUpdateTime == 0 || llabs(now - lastOnUpdateTime) >= ON_UPDATE_MIN_INTERVAL_MS) {
+            lastOnUpdateTime = now;
+            onUpdatePending = false;
+            delegate->onUpdate(instanceNum);
+        } else {
+            onUpdatePending = true;
+        }
     }
     if (datacenter != nullptr) {
         if (datacenter->hasAuthKey(ConnectionTypeGeneric, 1)) {
@@ -3640,6 +3663,7 @@ void ConnectionsManager::setPushConnectionEnabled(bool value) {
             sendPing(datacenter, true);
         }
     }
+    wakeup();
 }
 
 inline bool checkPhoneByPrefixesRules(std::string phone, std::string rules) {

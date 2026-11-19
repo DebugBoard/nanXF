@@ -267,6 +267,11 @@ public class ApplicationLoader extends Application {
 
                     boolean isSlow = isConnectionSlow();
                     for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                        // Don't spin up network stacks for unused account slots; a lazily created
+                        // ConnectionsManager runs checkConnection() itself at the end of init().
+                        if (!ConnectionsManager.isInstanceCreated(a)) {
+                            continue;
+                        }
                         ConnectionsManager.getInstance(a).checkConnection();
                         FileLoader.getInstance(a).onNetworkChanged(isSlow);
                     }
@@ -308,6 +313,9 @@ public class ApplicationLoader extends Application {
         FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(!NaConfig.INSTANCE.getDisableCrashlyticsCollection().Bool());
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) { //TODO improve account
             UserConfig.getInstance(a).loadConfig();
+            if (!shouldInitAccountOnStart(a)) {
+                continue;
+            }
             MessagesController.getInstance(a);
             if (a == 0) {
                 SharedConfig.pushStringStatus = "__FIREBASE_GENERATING_SINCE_" + ConnectionsManager.getInstance(a).getCurrentTime() + "__";
@@ -330,9 +338,17 @@ public class ApplicationLoader extends Application {
         MediaController.getInstance();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) { //TODO improve account
             ContactsController.getInstance(a).checkAppAccount();
-            DownloadController.getInstance(a);
+            if (shouldInitAccountOnStart(a)) {
+                DownloadController.getInstance(a);
+            }
         }
         BillingController.getInstance().startConnection();
+    }
+
+    // Unused account slots get their MessagesController/ConnectionsManager lazily (login, account
+    // switch), so don't start native network threads and handshakes for them on every cold start.
+    private static boolean shouldInitAccountOnStart(int account) {
+        return account == 0 || account == UserConfig.selectedAccount || UserConfig.getInstance(account).isClientActivated();
     }
 
     public ApplicationLoader() {
