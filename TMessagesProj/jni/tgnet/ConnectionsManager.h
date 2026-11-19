@@ -158,6 +158,8 @@ private:
     int32_t currentPingTimeLive = 0;
     bool registeringForPush = false;
     int64_t lastPushPingTime = 0;
+    int64_t lastOnUpdateTime = 0;
+    bool onUpdatePending = false;
     int32_t nextPingTimeOffset = 60000 * 3;
     int64_t sendingPushPingTime = 0;
     bool sendingPushPing = false;
