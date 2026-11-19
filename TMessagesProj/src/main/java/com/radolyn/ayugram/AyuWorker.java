@@ -18,12 +18,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AyuWorker {
 
     private static final long INITIAL_DELAY_MS = 1500L;
-    private static final long PERIOD_MS = 3000L;
     private static final long LAST_SEEN_FETCH_DELAY_MS = 100L;
 
     private static ScheduledFuture<?> scheduledTask;
     private static final ScheduledExecutorService scheduler =
-            Executors.newSingleThreadScheduledExecutor();
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "AyuWorker");
+                t.setDaemon(true);
+                return t;
+            });
     private static final ConcurrentHashMap<Integer, AtomicBoolean> needOffline =
             new ConcurrentHashMap<>();
 
@@ -41,10 +44,9 @@ public class AyuWorker {
         if (existing != null && !existing.isDone()) {
             existing.cancel(false);
         }
-        scheduledTask = scheduler.scheduleWithFixedDelay(
+        scheduledTask = scheduler.schedule(
                 AyuWorker::runOnce,
                 INITIAL_DELAY_MS,
-                PERIOD_MS,
                 TimeUnit.MILLISECONDS
         );
     }

@@ -14,6 +14,7 @@ public class DummyMessageWaiter extends SyncWaiter {
     private static final long LOOKUP_TIMEOUT_MS = 3500L;
     private static final long WATCHER_TIMEOUT_MS = 300000L;
     private static final long POLL_INTERVAL_MS = 25L;
+    private static final long WATCHER_MAX_POLL_INTERVAL_MS = 500L;
 
     private final Set<Integer> alreadySent = Collections.synchronizedSet(new HashSet<>());
     private final Set<Integer> baselineIds = new HashSet<>();
@@ -102,6 +103,7 @@ public class DummyMessageWaiter extends SyncWaiter {
         Thread watcher = new Thread(() -> {
             boolean observedNewPending = sendingId != 0;
             long start = System.currentTimeMillis();
+            long pollInterval = POLL_INTERVAL_MS;
             while (!isReleased() && System.currentTimeMillis() - start < WATCHER_TIMEOUT_MS) {
                 try {
                     ArrayList<Integer> currentIds = sendMessagesHelper.getSendingMessageIds(dialogId);
@@ -125,7 +127,8 @@ public class DummyMessageWaiter extends SyncWaiter {
                         return;
                     }
 
-                    Thread.sleep(POLL_INTERVAL_MS);
+                    Thread.sleep(pollInterval);
+                    pollInterval = Math.min(pollInterval * 2, WATCHER_MAX_POLL_INTERVAL_MS);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;

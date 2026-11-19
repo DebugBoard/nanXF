@@ -96,7 +96,7 @@ public class PythonPluginsEngine implements PluginsController.PluginsEngine {
     public static String SDK_VERSION;
     public static boolean SDK_BETA = false;
 
-    public PyObject basePluginClass;
+    public volatile PyObject basePluginClass;
     public PyObject debuggerListener;
     private PyObject devServerClass;
     public static volatile boolean sdkInitialized;
@@ -200,7 +200,8 @@ public class PythonPluginsEngine implements PluginsController.PluginsEngine {
 
     @Override
     public boolean isEngineAvailable() {
-        return getPython() != null && Python.isStarted() && sdkInitialized && basePluginClass != null;
+        // Side-effect free: this is on the request/update hot path. Initialisation happens in init().
+        return python != null && sdkInitialized && basePluginClass != null && Python.isStarted();
     }
 
     @Override
