@@ -74,7 +74,6 @@ public class ApplicationLoader extends Application {
 
     public static ApplicationLoader applicationLoaderInstance;
 
-    private static PendingIntent pendingIntent;
 
     @SuppressLint("StaticFieldLeak")
     public static volatile Context applicationContext;
@@ -537,7 +536,25 @@ public class ApplicationLoader extends Application {
         Utilities.stageQueue.postRunnable(ApplicationLoader::startPushServiceInternal);
     }
 
+    private static void cancelLegacyPushAlarm() {
+        try {
+            PendingIntent legacy = PendingIntent.getBroadcast(applicationContext, 0,
+                    new Intent(applicationContext, NotificationsService.class),
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_NO_CREATE);
+            if (legacy != null) {
+                AlarmManager am = (AlarmManager) applicationContext.getSystemService(Context.ALARM_SERVICE);
+                if (am != null) {
+                    am.cancel(legacy);
+                }
+                legacy.cancel();
+            }
+        } catch (Throwable e) {
+            FileLog.e(e);
+        }
+    }
+
     private static void startPushServiceInternal() {
+        cancelLegacyPushAlarm();
         if (PushListenerController.getProvider().hasServices()) {
             return;
         }
@@ -562,15 +579,6 @@ public class ApplicationLoader extends Application {
                     } else {
                         applicationContext.startService(new Intent(applicationContext, NotificationsService.class));
                     }
-
-                    Log.d("TFOSS", "Trying to start push service every 10 minutes");
-                    // Telegram-FOSS: unconditionally enable push service
-                    AlarmManager am = (AlarmManager) applicationContext.getSystemService(Context.ALARM_SERVICE);
-                    Intent i = new Intent(applicationContext, NotificationsService.class);
-                    pendingIntent = PendingIntent.getBroadcast(applicationContext, 0, i, PendingIntent.FLAG_IMMUTABLE);
-
-                    am.cancel(pendingIntent);
-                    am.setInexactRepeating(AlarmManager.RTC_WAKEUP, System.currentTimeMillis(), 10 * 60 * 1000, pendingIntent);
                 } catch (Throwable e) {
                     Log.e("TFOSS", "Failed to start push service");
                 }
@@ -578,13 +586,6 @@ public class ApplicationLoader extends Application {
 
         } else AndroidUtilities.runOnUIThread(() -> {
             applicationContext.stopService(new Intent(applicationContext, NotificationsService.class));
-
-            PendingIntent pintent = PendingIntent.getService(applicationContext, 0, new Intent(applicationContext, NotificationsService.class), PendingIntent.FLAG_MUTABLE);
-            AlarmManager alarm = (AlarmManager)applicationContext.getSystemService(Context.ALARM_SERVICE);
-            alarm.cancel(pintent);
-            if (pendingIntent != null) {
-                alarm.cancel(pendingIntent);
-            }
         });
     }
 

@@ -201,6 +201,7 @@ public class NekoGeneralSettingsActivity extends BaseNekoXSettingsActivity {
                     AndroidUtil.setPushService(false);
                     ApplicationLoader.startPushService();
                 } else {
+                    AndroidUtil.restoreForcedPushConnection();
                     NaConfig.INSTANCE.getPushServiceTypeInAppDialog().setConfigBool(false);
                     AndroidUtilities.runOnUIThread(() -> context.stopService(new Intent(context, NotificationsService.class)));
                 }

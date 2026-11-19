@@ -45,8 +45,15 @@ public class TrustedPluginsRemoteHelper extends BaseRemoteHelper {
         cachedTrustedPlugins = merged != null ? Collections.unmodifiableSet(parseTrustedPlugins(merged)) : null;
     }
 
+    private static final long REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000L;
+
     public void preload() {
         ensureListener();
+        long lastUpdate = preferences.getLong(getTag() + "_update_time", 0);
+        if (Math.abs(System.currentTimeMillis() - lastUpdate) < REFRESH_INTERVAL_MS
+                && !TextUtils.isEmpty(preferences.getString(getTag(), null))) {
+            return;
+        }
         load();
     }
 
