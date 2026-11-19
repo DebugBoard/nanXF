@@ -328,6 +328,10 @@ public class AyuFilter {
         return merged;
     }
 
+    public static boolean isFilteringActive() {
+        return NaConfig.INSTANCE.getRegexFiltersEnabled().Bool();
+    }
+
     public static boolean isFiltered(MessageObject msg, MessageObject.GroupedMessages group) {
         if (!NaConfig.INSTANCE.getRegexFiltersEnabled().Bool()) {
             return false;
@@ -732,18 +736,40 @@ public class AyuFilter {
     }
 
 
-    private static HashSet<Long> getExcludedDialogs() {
+    private static final Gson GSON = new Gson();
+
+    private static final class ExcludedSnapshot {
+        final String src;
+        final java.util.Set<Long> ids;
+
+        ExcludedSnapshot(String src, java.util.Set<Long> ids) {
+            this.src = src;
+            this.ids = ids;
+        }
+    }
+
+    private static volatile ExcludedSnapshot excludedSnapshot;
+
+    // Read-only view, memoized on the backing config string.
+    private static java.util.Set<Long> getExcludedDialogs() {
         HashSet<Long> set = new HashSet<>();
         try {
             String str = NaConfig.INSTANCE.getRegexFiltersExcludedDialogs().String();
-            Long[] arr = new Gson().fromJson(str, Long[].class);
+            ExcludedSnapshot snap = excludedSnapshot;
+            if (snap != null && (snap.src == str || (str != null && str.equals(snap.src)))) {
+                return snap.ids;
+            }
+            Long[] arr = GSON.fromJson(str, Long[].class);
             if (arr != null) {
                 set.addAll(Arrays.asList(arr));
             }
+            java.util.Set<Long> ro = Collections.unmodifiableSet(set);
+            excludedSnapshot = new ExcludedSnapshot(str, ro);
+            return ro;
         } catch (Exception e) {
             FileLog.e("AyuFilter.getExcludedDialogs", e);
         }
-        return set;
+        return Collections.unmodifiableSet(set);
     }
 
     public static boolean isDialogExcluded(long dialogId) {
@@ -760,7 +786,7 @@ public class AyuFilter {
         }
         if (changed) {
             Long[] arr = set.toArray(new Long[0]);
-            String str = new Gson().toJson(arr);
+            String str = GSON.toJson(arr);
             NaConfig.INSTANCE.getRegexFiltersExcludedDialogs().setConfigString(str);
             AyuFilterCache.clearDialog(dialogId);
         }

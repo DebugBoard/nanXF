@@ -10,6 +10,7 @@ import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.Utilities;
 import org.telegram.tgnet.SerializedData;
 
+import java.util.Iterator;
 import java.util.LinkedList;
 
 public class RecentDialogsStore {
@@ -51,9 +52,12 @@ public class RecentDialogsStore {
     public static void addToRecentDialogs(int currentAccount, long dialogId) {
         synchronized (lock) {
             LinkedList<Long> recentDialog = getOrLoadRecentDialogsLocked(currentAccount);
-            for (int i = 0; i < recentDialog.size(); i++) {
-                if (recentDialog.get(i) == dialogId) {
-                    recentDialog.remove(i);
+            if (!recentDialog.isEmpty() && recentDialog.getFirst() == dialogId) {
+                return;
+            }
+            for (Iterator<Long> it = recentDialog.iterator(); it.hasNext(); ) {
+                if (it.next() == dialogId) {
+                    it.remove();
                     break;
                 }
             }

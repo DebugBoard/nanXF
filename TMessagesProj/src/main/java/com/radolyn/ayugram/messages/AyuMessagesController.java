@@ -27,6 +27,7 @@ import com.radolyn.ayugram.utils.LastSeenHelper;
 
 import org.telegram.SQLite.SQLiteCursor;
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.MessagesController;
@@ -53,7 +54,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.function.Consumer;
 
 
-import tw.nekomimi.nekogram.NekoConfig;
 import tw.nekomimi.nekogram.utils.FileUtil;
 import xyz.nextalone.nagram.NaConfig;
 
@@ -70,12 +70,13 @@ public class AyuMessagesController {
     };
     private static AyuMessagesController instance;
     private static final String ATTACHMENTS_MAINTENANCE_KEY = "ayuLastAttachmentsMaintenance";
+    private static final String MAINTENANCE_PREFS = "ayu_maintenance";
+    private static final int ARCHIVE_BATCH_SIZE = 200;
     private static final long MAINTENANCE_INTERVAL_MS = 24L * 60L * 60L * 1000L;
     private final DeletedDialogService deletedDialogService;
     private final ExecutorService executor;
 
     private AyuMessagesController() {
-        initializeAttachmentsFolder();
         AyuSavePreferences.loadAllExclusions();
 
         executor = Executors.newFixedThreadPool(3, new ThreadFactory() {
@@ -86,6 +87,9 @@ public class AyuMessagesController {
                 return thread;
             }
         });
+
+        // 外部存储 I/O 不放在构造函数里（可能在 UI 线程触发）；所有写入附件目录的路径都会自己确保目录存在
+        executor.execute(AyuMessagesController::initializeAttachmentsFolder);
 
         deletedDialogService = new DeletedDialogService();
         scheduleRestoreDeletedDialogs();
@@ -132,13 +136,17 @@ public class AyuMessagesController {
         }
     }
 
-    private static void clearAttachmentPathReferences(String mediaPath) {
-        if (TextUtils.isEmpty(mediaPath)) {
+    private static void clearAttachmentPathReferences(List<String> mediaPaths) {
+        if (mediaPaths == null || mediaPaths.isEmpty()) {
             return;
         }
         try {
-            deletedMessageDao().clearMediaPath(mediaPath);
-            editedMessageDao().clearMediaPath(mediaPath);
+            deletedMessageDao().clearMediaPathsChunked(mediaPaths);
+        } catch (Exception e) {
+            FileLog.e("clearAttachmentPathReferences", e);
+        }
+        try {
+            editedMessageDao().clearMediaPathsChunked(mediaPaths);
         } catch (Exception e) {
             FileLog.e("clearAttachmentPathReferences", e);
         }
@@ -234,6 +242,14 @@ public class AyuMessagesController {
         return null;
     }
 
+    /** 写入附件目录前确保其存在（目录已在则只有一次 stat）。 */
+    public static void ensureAttachmentsFolder() {
+        syncAttachmentsPathWithConfig();
+        if (!attachmentsPath.isDirectory()) {
+            initializeAttachmentsFolder();
+        }
+    }
+
     private static void initializeAttachmentsFolder() {
         try {
             syncAttachmentsPathWithConfig();
@@ -304,35 +320,53 @@ public class AyuMessagesController {
                 return 0L;
             }
 
-            Arrays.sort(attachmentFiles, Comparator.comparingLong(File::lastModified));
-
+            int count = attachmentFiles.length;
+            long[] sizes = new long[count];
             long currentSize = 0L;
-            for (File file : attachmentFiles) {
-                currentSize += Math.max(0L, file.length());
+            for (int i = 0; i < count; i++) {
+                sizes[i] = Math.max(0L, attachmentFiles[i].length());
+                currentSize += sizes[i];
             }
+            if (currentSize <= limit) {
+                return 0L;
+            }
+
+            long[] modified = new long[count];
+            Integer[] order = new Integer[count];
+            for (int i = 0; i < count; i++) {
+                modified[i] = attachmentFiles[i].lastModified();
+                order[i] = i;
+            }
+            Arrays.sort(order, Comparator.comparingLong(i -> modified[i]));
 
             String keepPath = keepFile == null ? null : keepFile.getAbsolutePath();
             long deletedSize = 0L;
-            for (File file : attachmentFiles) {
-                if (currentSize <= limit) {
-                    break;
-                }
-                if (keepPath != null && keepPath.equals(file.getAbsolutePath())) {
-                    continue;
-                }
+            ArrayList<String> deletedPaths = new ArrayList<>();
+            try {
+                for (int idx : order) {
+                    if (currentSize <= limit) {
+                        break;
+                    }
+                    File file = attachmentFiles[idx];
+                    if (keepPath != null && keepPath.equals(file.getAbsolutePath())) {
+                        continue;
+                    }
 
-                long fileLength = Math.max(0L, file.length());
-                if (!file.exists()) {
-                    currentSize -= fileLength;
-                    continue;
+                    long fileLength = sizes[idx];
+                    if (!file.exists()) {
+                        currentSize -= fileLength;
+                        continue;
+                    }
+                    if (file.delete()) {
+                        currentSize -= fileLength;
+                        deletedSize += fileLength;
+                        deletedPaths.add(file.getAbsolutePath());
+                    } else {
+                        FileLog.e("Failed to delete old attachment " + file.getAbsolutePath());
+                    }
                 }
-                if (file.delete()) {
-                    currentSize -= fileLength;
-                    deletedSize += fileLength;
-                    clearAttachmentPathReferences(file.getAbsolutePath());
-                } else {
-                    FileLog.e("Failed to delete old attachment " + file.getAbsolutePath());
-                }
+            } finally {
+                clearAttachmentPathReferences(deletedPaths);
             }
 
             if (deletedSize > 0L) {
@@ -557,6 +591,25 @@ public class AyuMessagesController {
             ArrayList<TLRPC.Message> snapshot = new ArrayList<>();
             ArrayList<Integer> messageIds = new ArrayList<>();
             SQLiteCursor cursor = null;
+            if (!AyuSavePreferences.saveDeletedMessageFor(account, dialogId, 0)) {
+                // 不归档：只需要 id，不读取也不反序列化消息 BLOB
+                try {
+                    cursor = messagesStorage.getDatabase().queryFinalized(
+                            "SELECT mid FROM messages_v2 WHERE uid = " + dialogId
+                                    + " AND mid BETWEEN " + minId + " AND " + maxId);
+                    while (cursor.next()) {
+                        messageIds.add(cursor.intValue(0));
+                    }
+                } catch (Exception e) {
+                    messagesStorage.checkSQLException(e);
+                    callback.accept(new AyuHistoryDeletion(dialogId, deleteDate, minId, maxId, messageIds, new ArrayList<>(), false));
+                    return;
+                } finally {
+                    if (cursor != null) cursor.dispose();
+                }
+                callback.accept(new AyuHistoryDeletion(dialogId, deleteDate, minId, maxId, messageIds, new ArrayList<>(), true));
+                return;
+            }
             try {
                 cursor = messagesStorage.getDatabase().queryFinalized(
                         "SELECT mid, data, date, ttl FROM messages_v2 WHERE uid = " + dialogId
@@ -588,21 +641,25 @@ public class AyuMessagesController {
             } finally {
                 if (cursor != null) cursor.dispose();
             }
-            if (!AyuSavePreferences.saveDeletedMessageFor(account, dialogId, 0)) {
-                callback.accept(new AyuHistoryDeletion(dialogId, deleteDate, minId, maxId, messageIds, new ArrayList<>(), true));
-                return;
-            }
             executeAsync(() -> {
                 if (UserConfig.getInstance(account).getClientUserId() != userId) return;
                 ArrayList<Integer> savedIds = new ArrayList<>();
-                for (TLRPC.Message message : snapshot) {
-                    try {
-                        long topicId = AyuSavePreferences.resolveTopicId(account, message, dialogId);
-                        if (onMessageDeletedInner(new AyuSavePreferences(message, account, dialogId, topicId, message.id, deleteDate))) {
-                            savedIds.add(message.id);
+                for (int from = 0; from < snapshot.size(); from += ARCHIVE_BATCH_SIZE) {
+                    List<TLRPC.Message> chunk = snapshot.subList(from, Math.min(snapshot.size(), from + ARCHIVE_BATCH_SIZE));
+                    ArrayList<AyuSavePreferences> prefsList = new ArrayList<>(chunk.size());
+                    ArrayList<TLRPC.Message> prefsMessages = new ArrayList<>(chunk.size());
+                    for (TLRPC.Message message : chunk) {
+                        try {
+                            long topicId = AyuSavePreferences.resolveTopicId(account, message, dialogId);
+                            prefsList.add(new AyuSavePreferences(message, account, dialogId, topicId, message.id, deleteDate));
+                            prefsMessages.add(message);
+                        } catch (Throwable e) {
+                            FileLog.e("saveHistory", e);
                         }
-                    } catch (Throwable e) {
-                        FileLog.e("saveHistory", e);
+                    }
+                    boolean[] saved = onMessagesDeletedBatch(prefsList, "saveHistory");
+                    for (int i = 0; i < saved.length; i++) {
+                        if (saved[i]) savedIds.add(prefsMessages.get(i).id);
                     }
                 }
                 if (UserConfig.getInstance(account).getClientUserId() == userId) {
@@ -633,20 +690,25 @@ public class AyuMessagesController {
         executeAsync(() -> {
             if (UserConfig.getInstance(account).getClientUserId() != userId) return;
             androidx.collection.LongSparseArray<ArrayList<Integer>> savedIds = new androidx.collection.LongSparseArray<>();
-            for (TLRPC.Message message : snapshot) {
-                long actualDialogId = dialogId != 0 ? dialogId : MessageObject.getDialogId(message);
-                if (actualDialogId == 0) continue;
-                message.dialog_id = actualDialogId;
-                long topicId = AyuSavePreferences.resolveTopicId(account, message, actualDialogId);
-                AyuSavePreferences prefs = new AyuSavePreferences(message, account, actualDialogId, topicId, message.id, catchTime);
-                try {
-                    if (onMessageDeletedInner(prefs)) {
-                        ArrayList<Integer> ids = savedIds.get(actualDialogId);
-                        if (ids == null) savedIds.put(actualDialogId, ids = new ArrayList<>());
-                        ids.add(message.id);
-                    }
-                } catch (Throwable e) {
-                    FileLog.e("saveCollectedMessages", e);
+            for (int from = 0; from < snapshot.size(); from += ARCHIVE_BATCH_SIZE) {
+                int to = Math.min(snapshot.size(), from + ARCHIVE_BATCH_SIZE);
+                ArrayList<AyuSavePreferences> prefsList = new ArrayList<>(to - from);
+                for (int k = from; k < to; k++) {
+                    TLRPC.Message message = snapshot.get(k);
+                    long actualDialogId = dialogId != 0 ? dialogId : MessageObject.getDialogId(message);
+                    if (actualDialogId == 0) continue;
+                    message.dialog_id = actualDialogId;
+                    long topicId = AyuSavePreferences.resolveTopicId(account, message, actualDialogId);
+                    prefsList.add(new AyuSavePreferences(message, account, actualDialogId, topicId, message.id, catchTime));
+                }
+                boolean[] saved = onMessagesDeletedBatch(prefsList, "saveCollectedMessages");
+                for (int i = 0; i < saved.length; i++) {
+                    if (!saved[i]) continue;
+                    AyuSavePreferences prefs = prefsList.get(i);
+                    long actualDialogId = prefs.getDialogId();
+                    ArrayList<Integer> ids = savedIds.get(actualDialogId);
+                    if (ids == null) savedIds.put(actualDialogId, ids = new ArrayList<>());
+                    ids.add(prefs.getMessage().id);
                 }
             }
             if (savedIds.size() > 0) {
@@ -661,7 +723,7 @@ public class AyuMessagesController {
         }, "saveCollectedMessages");
     }
 
-    private boolean onMessageDeletedInner(AyuSavePreferences prefs) {
+    private boolean shouldArchiveDeleted(AyuSavePreferences prefs) {
         if (prefs.getDialogId() == 0 || prefs.getUserId() == 0 || prefs.getUserId() != UserConfig.getInstance(prefs.getAccountId()).getClientUserId()
                 || !AyuSavePreferences.saveDeletedMessageFor(prefs.getAccountId(), prefs.getDialogId(), prefs.getFromUserId())) {
             return false;
@@ -670,20 +732,12 @@ public class AyuMessagesController {
         var msg = prefs.getMessage();
 
         // 发送中的本地消息、服务消息、空消息不入库
-        if ((msg.send_state == 1 && msg.id < 0)
+        return !((msg.send_state == 1 && msg.id < 0)
                 || msg instanceof TLRPC.TL_messageService
-                || msg instanceof TLRPC.TL_messageEmpty) {
-            return false;
-        }
+                || msg instanceof TLRPC.TL_messageEmpty);
+    }
 
-        Boolean exists = withDaoRetry(
-                "onMessageDeletedInner#exists",
-                () -> deletedMessageDao().exists(prefs.getUserId(), prefs.getDialogId(), prefs.getTopicId(), prefs.getMessageId())
-        );
-
-        if (exists == null) return false;
-        if (exists) return true;
-
+    private DeletedMessage buildDeletedMessage(AyuSavePreferences prefs) {
         var deletedMessage = new DeletedMessage();
         deletedMessage.userId = prefs.getUserId();
         deletedMessage.dialogId = prefs.getDialogId();
@@ -693,8 +747,33 @@ public class AyuMessagesController {
         FileLog.d("saving message " + prefs.getMessageId() + " for " + prefs.getDialogId() + " with topic " + prefs.getTopicId());
 
         AyuMessageUtils.map(prefs, deletedMessage);
+        // 可能阻塞等待补下载，所以必须在任何事务之外调用
         AyuMessageUtils.mapMedia(prefs, deletedMessage, true);
+        return deletedMessage;
+    }
 
+    private boolean onMessageDeletedInner(AyuSavePreferences prefs) {
+        if (!shouldArchiveDeleted(prefs)) {
+            return false;
+        }
+
+        var msg = prefs.getMessage();
+
+        Boolean exists = withDaoRetry(
+                "onMessageDeletedInner#exists",
+                () -> deletedMessageDao().exists(prefs.getUserId(), prefs.getDialogId(), prefs.getTopicId(), prefs.getMessageId())
+        );
+
+        if (exists == null) return false;
+        if (exists) return true;
+
+        var deletedMessage = buildDeletedMessage(prefs);
+
+        return insertDeletedMessageSingle(prefs, deletedMessage, msg);
+    }
+
+    /** 逐条写入路径：insert、反应、最后消息缓存。批量事务失败时也用它兜底。 */
+    private boolean insertDeletedMessageSingle(AyuSavePreferences prefs, DeletedMessage deletedMessage, TLRPC.Message msg) {
         Long fakeMsgId = withDaoRetry(
                 "onMessageDeletedInner#insert",
                 () -> deletedMessageDao().insert(deletedMessage)
@@ -710,6 +789,88 @@ public class AyuMessagesController {
 
         updateLastMessageCache(prefs, msg);
         return true;
+    }
+
+    /**
+     * 批量归档一组消息（调用方已按 {@link #ARCHIVE_BATCH_SIZE} 分块）。
+     * 第一阶段在事务外构建实体（mapMedia 可能阻塞）；第二阶段一个事务内“不存在才插入”；
+     * 之后按原顺序逐条做提交后副作用（最后消息缓存）。
+     *
+     * @return 与 prefsList 等长；true 表示该条已保存（或此前已存在），与 onMessageDeletedInner 的返回值一致
+     */
+    private boolean[] onMessagesDeletedBatch(List<AyuSavePreferences> prefsList, String tag) {
+        int n = prefsList.size();
+        boolean[] results = new boolean[n];
+        ArrayList<Integer> pendingIndex = new ArrayList<>();
+        ArrayList<DeletedMessage> pendingMessages = new ArrayList<>();
+        ArrayList<List<DeletedMessageReaction>> pendingReactions = new ArrayList<>();
+
+        for (int i = 0; i < n; i++) {
+            AyuSavePreferences prefs = prefsList.get(i);
+            try {
+                if (!shouldArchiveDeleted(prefs)) {
+                    continue;
+                }
+                Boolean exists = withDaoRetry(
+                        "onMessageDeletedInner#exists",
+                        () -> deletedMessageDao().exists(prefs.getUserId(), prefs.getDialogId(), prefs.getTopicId(), prefs.getMessageId())
+                );
+                if (exists == null) continue;
+                if (exists) {
+                    results[i] = true;
+                    continue;
+                }
+                DeletedMessage deletedMessage = buildDeletedMessage(prefs);
+                var msg = prefs.getMessage();
+                pendingIndex.add(i);
+                pendingMessages.add(deletedMessage);
+                pendingReactions.add(msg != null && msg.reactions != null ? buildDeletedReactions(msg.reactions) : null);
+            } catch (Throwable e) {
+                FileLog.e(tag, e);
+            }
+        }
+
+        if (pendingIndex.isEmpty()) {
+            return results;
+        }
+
+        List<Long> ids = null;
+        try {
+            ids = deletedMessageDao().insertAllIfAbsent(pendingMessages, pendingReactions);
+        } catch (Throwable e) {
+            // 事务已整体回滚，下面逐条重试
+            FileLog.e(tag + "#batch", e);
+        }
+        boolean batchOk = ids != null && ids.size() == pendingIndex.size();
+
+        for (int k = 0; k < pendingIndex.size(); k++) {
+            int i = pendingIndex.get(k);
+            AyuSavePreferences prefs = prefsList.get(i);
+            try {
+                if (batchOk) {
+                    results[i] = true;
+                    if (ids.get(k) != -1L) {
+                        updateLastMessageCache(prefs, prefs.getMessage());
+                    }
+                    // -1：事务内发现已存在，与逐条路径的 exists 命中一致，不动缓存
+                } else {
+                    DeletedMessage deletedMessage = pendingMessages.get(k);
+                    Boolean exists = withDaoRetry(
+                            "onMessageDeletedInner#exists",
+                            () -> deletedMessageDao().exists(deletedMessage.userId, deletedMessage.dialogId, deletedMessage.topicId, deletedMessage.messageId)
+                    );
+                    if (exists == null) continue;
+                    if (exists) {
+                        results[i] = true;
+                        continue;
+                    }
+                    results[i] = insertDeletedMessageSingle(prefs, deletedMessage, prefs.getMessage());
+                }
+            } catch (Throwable e) {
+                FileLog.e(tag, e);
+            }
+        }
+        return results;
     }
 
     private void updateLastMessageCache(AyuSavePreferences prefs, TLRPC.Message msg) {
@@ -748,13 +909,27 @@ public class AyuMessagesController {
     }
 
     private void processDeletedReactions(long fakeMessageId, TLRPC.TL_messageReactions reactions) {
+        for (var deletedReaction : buildDeletedReactions(reactions)) {
+            deletedReaction.deletedMessageId = fakeMessageId;
+            withDaoRetry(
+                    "processDeletedReactions#insertReaction",
+                    () -> {
+                        deletedMessageDao().insertReaction(deletedReaction);
+                        return null;
+                    }
+            );
+        }
+    }
+
+    /** 只构建反应实体（deletedMessageId 由插入方填写）。 */
+    private List<DeletedMessageReaction> buildDeletedReactions(TLRPC.TL_messageReactions reactions) {
+        ArrayList<DeletedMessageReaction> out = new ArrayList<>();
         for (var reaction : reactions.results) {
             if (reaction.reaction instanceof TLRPC.TL_reactionEmpty) {
                 continue;
             }
 
             var deletedReaction = new DeletedMessageReaction();
-            deletedReaction.deletedMessageId = fakeMessageId;
             deletedReaction.count = reaction.count;
             deletedReaction.selfSelected = reaction.chosen;
 
@@ -768,15 +943,9 @@ public class AyuMessagesController {
             } else {
                 continue;
             }
-
-            withDaoRetry(
-                    "processDeletedReactions#insertReaction",
-                    () -> {
-                        deletedMessageDao().insertReaction(deletedReaction);
-                        return null;
-                    }
-            );
+            out.add(deletedReaction);
         }
+        return out;
     }
 
     public boolean hasAnyRevisions(long userId, long dialogId, int messageId) {
@@ -1148,6 +1317,7 @@ public class AyuMessagesController {
                 paths.addAll(editedPaths);
             }
 
+            ArrayList<String> stalePaths = new ArrayList<>();
             for (String path : paths) {
                 if (TextUtils.isEmpty(path)) {
                     continue;
@@ -1159,9 +1329,10 @@ public class AyuMessagesController {
                 } catch (Throwable ignored) {
                     // 路径不合法，同样按缺失处理
                 }
-                clearAttachmentPathReferences(path);
+                stalePaths.add(path);
                 cleared++;
             }
+            clearAttachmentPathReferences(stalePaths);
         } catch (Exception e) {
             FileLog.e("reconcileAttachmentReferences", e);
         }
@@ -1178,14 +1349,22 @@ public class AyuMessagesController {
      * 文件被外部删掉后记录会一直残留。
      */
     public static void scheduleAttachmentsMaintenance() {
+        // 两项归档都关闭时不会有新附件写入，维护无意义；重新开启后的首次启动会补跑
+        if (!NaConfig.INSTANCE.getEnableSaveDeletedMessages().Bool()
+                && !NaConfig.INSTANCE.getEnableSaveEditsHistory().Bool()) {
+            return;
+        }
         Utilities.globalQueue.postRunnable(() -> {
             try {
                 long now = System.currentTimeMillis();
-                long last = NekoConfig.getPreferences().getLong(ATTACHMENTS_MAINTENANCE_KEY, 0L);
+                // 独立的 prefs 文件，避免写 nkmrcfg 触发云同步监听
+                android.content.SharedPreferences maintenancePrefs = ApplicationLoader.applicationContext
+                        .getSharedPreferences(MAINTENANCE_PREFS, android.content.Context.MODE_PRIVATE);
+                long last = maintenancePrefs.getLong(ATTACHMENTS_MAINTENANCE_KEY, 0L);
                 if (last != 0L && now - last < MAINTENANCE_INTERVAL_MS) {
                     return;
                 }
-                NekoConfig.getPreferences().edit().putLong(ATTACHMENTS_MAINTENANCE_KEY, now).apply();
+                maintenancePrefs.edit().putLong(ATTACHMENTS_MAINTENANCE_KEY, now).apply();
 
                 trimAttachmentsFolderToLimit();
                 reconcileAttachmentReferences();

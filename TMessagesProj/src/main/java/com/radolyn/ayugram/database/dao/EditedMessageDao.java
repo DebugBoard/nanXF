@@ -12,8 +12,10 @@ package com.radolyn.ayugram.database.dao;
 import androidx.room.Dao;
 import androidx.room.Insert;
 import androidx.room.Query;
+import androidx.room.Transaction;
 import com.radolyn.ayugram.database.entities.EditedMessage;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Dao
@@ -44,6 +46,17 @@ public interface EditedMessageDao {
 
     @Query("UPDATE editedmessage SET mediaPath = NULL WHERE mediaPath = :mediaPath")
     void clearMediaPath(String mediaPath);
+
+    @Query("UPDATE editedmessage SET mediaPath = NULL WHERE mediaPath IN (:paths)")
+    void clearMediaPaths(List<String> paths);
+
+    /** 分块（每块 <= 500，低于 SQLite 999 变量上限）在同一事务内批量清除 mediaPath。 */
+    @Transaction
+    default void clearMediaPathsChunked(List<String> paths) {
+        for (int from = 0; from < paths.size(); from += 500) {
+            clearMediaPaths(new ArrayList<>(paths.subList(from, Math.min(paths.size(), from + 500))));
+        }
+    }
 
     @Query("UPDATE editedmessage SET mediaPath = NULL, documentType = 0 WHERE mediaPath IS NOT NULL")
     void clearAllMediaPaths();

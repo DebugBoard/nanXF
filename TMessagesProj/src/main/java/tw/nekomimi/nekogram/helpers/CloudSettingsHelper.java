@@ -39,6 +39,7 @@ import org.telegram.ui.Stories.recorder.ButtonWithCounterView;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
@@ -48,7 +49,12 @@ import java.util.zip.GZIPOutputStream;
 import tw.nekomimi.nekogram.utils.GsonUtil;
 
 public class CloudSettingsHelper {
-    public static final SharedPreferences.OnSharedPreferenceChangeListener listener = (preferences, key) -> CloudSettingsHelper.getInstance().doAutoSync();
+    public static final SharedPreferences.OnSharedPreferenceChangeListener listener = (preferences, key) -> {
+        if (key != null && !SettingsBackupHelper.isRestorableNekoKey(key)) {
+            return;
+        }
+        CloudSettingsHelper.getInstance().doAutoSync();
+    };
     private static final SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("nekocloud", Context.MODE_PRIVATE);
     private final SparseArray<Long> cloudSyncedDate = new SparseArray<>();
     private final Handler handler = new Handler();
@@ -63,7 +69,7 @@ public class CloudSettingsHelper {
     private static final int MAX_CHUNK_CHARS = 3000;
     private static final int RESTORE_BATCH_SIZE = 50;
 
-    private final Runnable cloudSyncRunnable = () -> CloudSettingsHelper.getInstance().syncToCloud((success, error) -> {
+    private final Runnable cloudSyncRunnable = () -> CloudSettingsHelper.getInstance().syncToCloud(false, (success, error) -> {
         if (!success) {
             var global = BulletinFactory.global();
             if (error == null) {
@@ -149,7 +155,7 @@ public class CloudSettingsHelper {
         linearLayout.addView(buttonTextView, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, 48, 16, 0, 16, 0));
         buttonTextView.setOnClickListener(view -> {
             syncedDate.setText(AndroidUtilities.replaceTags(LocaleController.formatString(R.string.CloudConfigSyncing)));
-            syncToCloud((success, error) -> {
+            syncToCloud(true, (success, error) -> {
                 syncedDate.setText(formatSyncedDate());
                 if (!success) {
                     if (error == null) {
@@ -231,18 +237,40 @@ public class CloudSettingsHelper {
         handler.postDelayed(cloudSyncRunnable, 1200);
     }
 
-    private void syncToCloud(Utilities.Callback2<Boolean, String> callback) {
-        try {
-            String settingsJson = SettingsBackupHelper.backupSettingsJson(true, 0);
-            String payload = gzipBase64Encode(settingsJson);
-            int numChunks = (int) Math.ceil((double) payload.length() / MAX_CHUNK_CHARS);
-            syncChunk(payload, 0, numChunks, MAX_CHUNK_CHARS, callback);
-        } catch (Exception error) {
-            callback.run(false, error.toString());
-        }
+    private static String hashKey() {
+        return "last_uploaded_hash_" + UserConfig.selectedAccount;
     }
 
-    private void syncChunk(String setting, int index, int numChunks, int chunkSize, Utilities.Callback2<Boolean, String> callback) {
+    private static String sha256Hex(String input) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder(digest.length * 2);
+        for (byte b : digest) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    // force: manual sync always uploads; auto sync skips when nothing changed since the last successful upload
+    private void syncToCloud(boolean force, Utilities.Callback2<Boolean, String> callback) {
+        final String hashPrefKey = hashKey();
+        Utilities.globalQueue.postRunnable(() -> {
+            try {
+                String settingsJson = SettingsBackupHelper.backupSettingsJson(true, 0);
+                String hash = sha256Hex(settingsJson);
+                if (!force && hash.equals(preferences.getString(hashPrefKey, null))) {
+                    AndroidUtilities.runOnUIThread(() -> callback.run(true, null));
+                    return;
+                }
+                String payload = gzipBase64Encode(settingsJson);
+                int numChunks = (int) Math.ceil((double) payload.length() / MAX_CHUNK_CHARS);
+                AndroidUtilities.runOnUIThread(() -> syncChunk(payload, 0, numChunks, MAX_CHUNK_CHARS, hashPrefKey, hash, callback));
+            } catch (Exception error) {
+                AndroidUtilities.runOnUIThread(() -> callback.run(false, error.toString()));
+            }
+        });
+    }
+
+    private void syncChunk(String setting, int index, int numChunks, int chunkSize, String hashPrefKey, String hash, Utilities.Callback2<Boolean, String> callback) {
         if (index >= numChunks) {
             getCloudStorageHelper().setItem(SETTINGS_CHUNKS_COUNT_KEY, String.valueOf(numChunks), (res, error) -> {
                 if (error == null) {
@@ -250,7 +278,7 @@ public class CloudSettingsHelper {
                     cloudSyncedDate.put(UserConfig.selectedAccount, localSyncedDate);
                     getCloudStorageHelper().setItem(SETTINGS_UPDATED_AT_KEY, String.valueOf(localSyncedDate), null);
                     getCloudStorageHelper().setItem(SETTINGS_ENCODING_KEY, SETTINGS_ENCODING_GZIP_BASE64_V1, null);
-                    preferences.edit().putLong("updated_at", localSyncedDate).apply();
+                    preferences.edit().putLong("updated_at", localSyncedDate).putString(hashPrefKey, hash).apply();
                     callback.run(true, null);
                 } else {
                     callback.run(false, error);
@@ -268,7 +296,7 @@ public class CloudSettingsHelper {
             if (error != null) {
                 callback.run(false, error);
             } else {
-                syncChunk(setting, index + 1, numChunks, chunkSize, callback);
+                syncChunk(setting, index + 1, numChunks, chunkSize, hashPrefKey, hash, callback);
             }
         });
     }
@@ -309,7 +337,7 @@ public class CloudSettingsHelper {
                     }
                     SettingsBackupHelper.importSettings(GsonUtil.toJsonObject(json));
                     localSyncedDate = System.currentTimeMillis();
-                    preferences.edit().putLong("updated_at", localSyncedDate).apply();
+                    preferences.edit().putLong("updated_at", localSyncedDate).remove(hashKey()).apply();
                     callback.run(true, null);
                 } catch (Exception e) {
                     FileLog.e(e);
@@ -395,6 +423,7 @@ public class CloudSettingsHelper {
             getCloudStorageHelper().removeItems(nekoKeys.toArray(new String[0]), (res_, error_) -> {
                 if (error_ == null) {
                     cloudSyncedDate.put(UserConfig.selectedAccount, -1L);
+                    preferences.edit().remove(hashKey()).apply();
                     callback.run(true, null);
                 } else {
                     callback.run(false, error_);
