@@ -5,6 +5,7 @@ import androidx.room.Dao;
 import androidx.room.Insert;
 import androidx.room.OnConflictStrategy;
 import androidx.room.Query;
+import androidx.room.Transaction;
 
 import com.radolyn.ayugram.database.entities.SpyLastSeen;
 import com.radolyn.ayugram.database.entities.SpyMessageContentsRead;
@@ -25,6 +26,37 @@ public interface SpyDao {
 
     @Query("SELECT * FROM SpyMessageContentsRead WHERE userId = :userId AND dialogId = :dialogId AND messageId = :messageId LIMIT 1")
     SpyMessageContentsRead getMessageContentsRead(long userId, long dialogId, int messageId);
+
+    /** 同一事务内逐条“不存在才插入”，语义与逐条 getMessageRead + insert 相同。 */
+    @Transaction
+    default void insertReadsIfAbsent(long userId, long dialogId, List<Integer> mids, int ts) {
+        for (int i = 0; i < mids.size(); i++) {
+            int mid = mids.get(i);
+            if (getMessageRead(userId, dialogId, mid) == null) {
+                SpyMessageRead entry = new SpyMessageRead();
+                entry.userId = userId;
+                entry.dialogId = dialogId;
+                entry.messageId = mid;
+                entry.entityCreateDate = ts;
+                insert(entry);
+            }
+        }
+    }
+
+    @Transaction
+    default void insertContentsReadsIfAbsent(long userId, long dialogId, List<Integer> mids, int ts) {
+        for (int i = 0; i < mids.size(); i++) {
+            int mid = mids.get(i);
+            if (getMessageContentsRead(userId, dialogId, mid) == null) {
+                SpyMessageContentsRead entry = new SpyMessageContentsRead();
+                entry.userId = userId;
+                entry.dialogId = dialogId;
+                entry.messageId = mid;
+                entry.entityCreateDate = ts;
+                insert(entry);
+            }
+        }
+    }
 
     @Query("DELETE FROM SpyMessageRead WHERE entityCreateDate < :cutoff")
     void deleteOldReads(int cutoff);

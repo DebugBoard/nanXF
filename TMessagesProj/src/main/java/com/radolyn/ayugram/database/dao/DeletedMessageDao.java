@@ -17,6 +17,7 @@ import com.radolyn.ayugram.database.entities.DeletedMessage;
 import com.radolyn.ayugram.database.entities.DeletedMessageFull;
 import com.radolyn.ayugram.database.entities.DeletedMessageReaction;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Dao
@@ -178,6 +179,44 @@ public interface DeletedMessageDao {
 
     @Query("UPDATE deletedmessage SET mediaPath = NULL WHERE mediaPath = :mediaPath")
     void clearMediaPath(String mediaPath);
+
+    @Query("UPDATE deletedmessage SET mediaPath = NULL WHERE mediaPath IN (:paths)")
+    void clearMediaPaths(List<String> paths);
+
+    /** 分块（每块 <= 500，低于 SQLite 999 变量上限）在同一事务内批量清除 mediaPath。 */
+    @Transaction
+    default void clearMediaPathsChunked(List<String> paths) {
+        for (int from = 0; from < paths.size(); from += 500) {
+            clearMediaPaths(new ArrayList<>(paths.subList(from, Math.min(paths.size(), from + 500))));
+        }
+    }
+
+    /**
+     * 批量归档：同一事务内逐条“不存在才插入”，每条带自己的反应。
+     * 返回与入参等长的 id 列表，-1 表示事务内发现已存在而跳过。
+     * 任一行抛异常会让整个事务回滚，调用方负责回退到逐条路径。
+     */
+    @Transaction
+    default List<Long> insertAllIfAbsent(List<DeletedMessage> msgs, List<List<DeletedMessageReaction>> reactions) {
+        ArrayList<Long> ids = new ArrayList<>(msgs.size());
+        for (int i = 0; i < msgs.size(); i++) {
+            DeletedMessage m = msgs.get(i);
+            if (exists(m.userId, m.dialogId, m.topicId, m.messageId)) {
+                ids.add(-1L);
+                continue;
+            }
+            long id = insert(m);
+            ids.add(id);
+            List<DeletedMessageReaction> rs = reactions.get(i);
+            if (rs != null) {
+                for (DeletedMessageReaction r : rs) {
+                    r.deletedMessageId = id;
+                    insertReaction(r);
+                }
+            }
+        }
+        return ids;
+    }
 
     @Query("UPDATE deletedmessage SET mediaPath = NULL, documentType = 0 WHERE mediaPath IS NOT NULL")
     void clearAllMediaPaths();

@@ -186,15 +186,18 @@ public final class SettingsBackupHelper {
         }
     }
 
-    @SuppressLint("ApplySharedPref")
-    public static void importSettings(JsonObject configJson) throws JSONException {
+    private static Set<String> getAllowedNekoKeys() {
         Set<String> allowedKeys = new HashSet<>();
         try {
             allowedKeys.addAll(NekoConfig.getAllKeys());
             allowedKeys.addAll(NaConfig.INSTANCE.getAllKeys());
         } catch (Throwable ignore) {
         }
-        String[] preservePrefixes = {
+        return allowedKeys;
+    }
+
+    private static String[] getPreservePrefixes() {
+        return new String[]{
                 AyuGhostPreferences.ghostReadExclusionPrefix,
                 AyuGhostPreferences.ghostTypingExclusionPrefix,
                 AyuGhostPreferences.ghostReadExceptionPrefix,
@@ -208,6 +211,36 @@ public final class SettingsBackupHelper {
                 LocalPremiumStatusHelper.KEY_PREFIX,
                 BookmarksHelper.KEY_PREFIX
         };
+    }
+
+    /**
+     * Whether an "nkmrcfg" key is restored by {@link #importSettings}.
+     */
+    public static boolean isRestorableNekoKey(String key) {
+        return isRestorableNekoKey(key, null);
+    }
+
+    private static boolean isRestorableNekoKey(String key, Set<String> allowedKeys) {
+        for (String prefix : getPreservePrefixes()) {
+            if (key.startsWith(prefix)) {
+                return true;
+            }
+        }
+        String actualKey = key;
+        if (key.endsWith("_long")) {
+            actualKey = StringsKt.substringBeforeLast(key, "_long", key);
+        } else if (key.endsWith("_float")) {
+            actualKey = StringsKt.substringBeforeLast(key, "_float", key);
+        }
+        if (allowedKeys == null) {
+            allowedKeys = getAllowedNekoKeys();
+        }
+        return allowedKeys.contains(actualKey);
+    }
+
+    @SuppressLint("ApplySharedPref")
+    public static void importSettings(JsonObject configJson) throws JSONException {
+        Set<String> allowedKeys = getAllowedNekoKeys();
 
         for (Map.Entry<String, JsonElement> element : configJson.entrySet()) {
             String spName = element.getKey();
@@ -217,22 +250,7 @@ public final class SettingsBackupHelper {
                 String key = config.getKey();
                 JsonPrimitive value = (JsonPrimitive) config.getValue();
                 if ("nkmrcfg".equals(spName)) {
-                    boolean shouldSkip = true;
-                    for (String prefix : preservePrefixes) {
-                        if (key.startsWith(prefix)) {
-                            shouldSkip = false;
-                            break;
-                        }
-                    }
-                    if (shouldSkip) {
-                        String actualKey = key;
-                        if (key.endsWith("_long")) {
-                            actualKey = StringsKt.substringBeforeLast(key, "_long", key);
-                        } else if (key.endsWith("_float")) {
-                            actualKey = StringsKt.substringBeforeLast(key, "_float", key);
-                        }
-                        shouldSkip = !allowedKeys.contains(actualKey);
-                    }
+                    boolean shouldSkip = !isRestorableNekoKey(key, allowedKeys);
                     if (shouldSkip) {
                         continue;
                     }
