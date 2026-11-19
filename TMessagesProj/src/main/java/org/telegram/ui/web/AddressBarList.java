@@ -754,8 +754,8 @@ public class AddressBarList extends FrameLayout {
                 }
             }
             iconView.clearImage();
-            if (meta != null && meta.favicon != null) {
-                iconView.setImageBitmap(meta.favicon);
+            if (meta != null && meta.getFavicon() != null) {
+                iconView.setImageBitmap(meta.getFavicon());
             } else if (webPage != null && webPage.photo != null) {
                 iconView.setImage(
                     ImageLocation.getForPhoto(FileLoader.getClosestPhotoSizeWithSize(webPage.photo.sizes, dp(32), true, null, true), webPage.photo), dp(32)+"_"+dp(32),
@@ -834,8 +834,8 @@ public class AddressBarList extends FrameLayout {
                     textView.setText("");
                 }
             }
-            if (meta != null && meta.favicon != null) {
-                iconView.setImageBitmap(meta.favicon);
+            if (meta != null && meta.getFavicon() != null) {
+                iconView.setImageBitmap(meta.getFavicon());
             } else {
                 final String s = textView.getText() == null ? "" : textView.getText().toString();
                 final BreakIterator bi = BreakIterator.getCharacterInstance();

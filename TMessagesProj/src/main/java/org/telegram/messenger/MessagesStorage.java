@@ -16332,9 +16332,9 @@ public class MessagesStorage extends BaseController {
         }
         // don't overwrite local media with the burned (empty) version coming from the server
         TLRPC.MessageMedia media = message.media;
-        if (AyuSavePreferences.shouldKeepMediaFor(currentAccount, MessageObject.getDialogId(message), message)
-                && media != null && media.ttl_seconds != 0
-                && (media.photo instanceof TLRPC.TL_photoEmpty || media.document instanceof TLRPC.TL_documentEmpty)) {
+        if (media != null && media.ttl_seconds != 0
+                && (media.photo instanceof TLRPC.TL_photoEmpty || media.document instanceof TLRPC.TL_documentEmpty)
+                && AyuSavePreferences.shouldKeepMediaFor(currentAccount, MessageObject.getDialogId(message), message)) {
             return;
         }
         storageQueue.postRunnable(() -> {

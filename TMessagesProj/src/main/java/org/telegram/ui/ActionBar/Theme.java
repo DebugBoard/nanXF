@@ -7428,8 +7428,13 @@ public class Theme {
         saveOtherThemes(true);
     }
 
+    private static final java.util.Set<String> verifiedAssetFiles = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public static File getAssetFile(String assetName) {
         File file = new File(ApplicationLoader.getFilesDirFixed(), assetName);
+        if (!BuildConfig.DEBUG && file.exists() && verifiedAssetFiles.contains(assetName)) {
+            return file;
+        }
         long size;
         try {
             InputStream stream = ApplicationLoader.applicationContext.getAssets().open(assetName);
@@ -7445,6 +7450,9 @@ public class Theme {
             } catch (Exception e) {
                 FileLog.e(e);
             }
+        }
+        if (file.exists()) {
+            verifiedAssetFiles.add(assetName);
         }
         return file;
     }
@@ -7775,6 +7783,7 @@ public class Theme {
     public static SparseIntArray getThemeFileValues(File file, String assetName, String[] wallpaperLink) {
         FileInputStream stream = null;
         SparseIntArray stringMap = new SparseIntArray();
+        HashMap<String, Integer> monetCache = null;
         try {
             byte[] bytes = new byte[1024];
             int currentPosition = 0;
@@ -7813,7 +7822,15 @@ public class Theme {
                                         value = Utilities.parseInt(param);
                                     }
                                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && (param.startsWith("a") || param.startsWith("n") || param.startsWith("monet"))) {
-                                    value = MonetHelper.getColor(param);
+                                    if (monetCache == null) {
+                                        monetCache = new HashMap<>();
+                                    }
+                                    Integer cached = monetCache.get(param);
+                                    if (cached == null) {
+                                        cached = MonetHelper.getColor(param);
+                                        monetCache.put(param, cached);
+                                    }
+                                    value = cached;
                                 } else {
                                     value = Utilities.parseInt(param);
                                 }

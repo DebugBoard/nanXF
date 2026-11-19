@@ -48,6 +48,7 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.TextPaint;
 import android.text.TextUtils;
+import android.util.LruCache;
 import android.util.Pair;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
@@ -479,6 +480,7 @@ public class NotificationsController extends BaseController implements Notificat
     }
 
     public void cleanup() {
+        roundAvatarCache.evictAll();
         popupMessages.clear();
         popupReplyMessages.clear();
         channelGroupsCreated = false;
@@ -6003,6 +6005,8 @@ public class NotificationsController extends BaseController implements Notificat
         return new Pair<>(storiesCount, hidden);
     }
 
+    private static final LruCache<String, Bitmap> roundAvatarCache = new LruCache<>(24);
+
     public static Person.Builder loadRoundAvatar(long dialogId, File avatar, Person.Builder personBuilder) {
         if (dialogId == UserObject.OAUTH) {
             personBuilder.setIcon(IconCompat.createWithResource(ApplicationLoader.applicationContext, R.mipmap.ic_launcher_dr));
@@ -6010,21 +6014,26 @@ public class NotificationsController extends BaseController implements Notificat
         }
         if (avatar != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
-                Bitmap bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(avatar), (decoder, info, src) -> {
-                    decoder.setPostProcessor((canvas) -> {
-                        Path path = new Path();
-                        path.setFillType(Path.FillType.INVERSE_EVEN_ODD);
-                        int width = canvas.getWidth();
-                        int height = canvas.getHeight();
-                        path.addRoundRect(0, 0, width, height, width / 2, width / 2, Path.Direction.CW);
-                        Paint paint = new Paint();
-                        paint.setAntiAlias(true);
-                        paint.setColor(Color.TRANSPARENT);
-                        paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC));
-                        canvas.drawPath(path, paint);
-                        return PixelFormat.TRANSLUCENT;
+                String cacheKey = avatar.getAbsolutePath() + ":" + avatar.length() + ":" + avatar.lastModified();
+                Bitmap bitmap = roundAvatarCache.get(cacheKey);
+                if (bitmap == null || bitmap.isRecycled()) {
+                    bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(avatar), (decoder, info, src) -> {
+                        decoder.setPostProcessor((canvas) -> {
+                            Path path = new Path();
+                            path.setFillType(Path.FillType.INVERSE_EVEN_ODD);
+                            int width = canvas.getWidth();
+                            int height = canvas.getHeight();
+                            path.addRoundRect(0, 0, width, height, width / 2, width / 2, Path.Direction.CW);
+                            Paint paint = new Paint();
+                            paint.setAntiAlias(true);
+                            paint.setColor(Color.TRANSPARENT);
+                            paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC));
+                            canvas.drawPath(path, paint);
+                            return PixelFormat.TRANSLUCENT;
+                        });
                     });
-                });
+                    roundAvatarCache.put(cacheKey, bitmap);
+                }
                 IconCompat icon = IconCompat.createWithBitmap(bitmap);
                 personBuilder.setIcon(icon);
             } catch (Throwable ignore) {

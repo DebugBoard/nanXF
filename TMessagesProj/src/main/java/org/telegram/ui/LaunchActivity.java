@@ -8038,6 +8038,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.startAllHeavyOperations, 4096);
         MediaController.getInstance().setFeedbackView(feedbackView = actionBarLayout.getView(), true);
         ApplicationLoader.mainInterfacePaused = false;
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            com.exteragram.messenger.feed.FeedController feedController = UserConfig.getInstance(a).isClientActivated() ? com.exteragram.messenger.feed.FeedController.peekInstance(a) : null;
+            if (feedController != null) feedController.onAppResumed();
+        }
         MessagesController.getInstance(currentAccount).sortDialogs(null);
         showLanguageAlert(false);
         Utilities.stageQueue.postRunnable(() -> {

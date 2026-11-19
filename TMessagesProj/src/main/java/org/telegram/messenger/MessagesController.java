@@ -156,6 +156,7 @@ import com.radolyn.ayugram.messages.AyuSavePreferences;
 import com.radolyn.ayugram.messages.AyuMessagesController;
 import com.radolyn.ayugram.proprietary.AyuHistoryHook;
 import com.radolyn.ayugram.proprietary.AyuHistoryPagination;
+import com.radolyn.ayugram.AyuSaveExclusions;
 import com.radolyn.ayugram.utils.AyuMessageUtils;
 import com.radolyn.ayugram.utils.AyuMessageKey;
 import com.radolyn.ayugram.utils.AyuState;
@@ -1481,6 +1482,35 @@ public class MessagesController extends BaseController implements NotificationCe
     }
 
     private DialogFilter sortingDialogFilter;
+
+    // per-sort memo of ChatsHelper.isUnreadSortPriority; thread-local because sortDialogsList can be called from any thread
+    private final ThreadLocal<LongSparseArray<Boolean>> unreadPriorityMemo = new ThreadLocal<>();
+
+    private boolean isUnreadSortPriorityMemo(TLRPC.Dialog dialog) {
+        LongSparseArray<Boolean> memo = unreadPriorityMemo.get();
+        if (memo == null) {
+            return ChatsHelper.getInstance(currentAccount).isUnreadSortPriority(dialog);
+        }
+        Boolean priority = memo.get(dialog.id);
+        if (priority == null) {
+            priority = ChatsHelper.getInstance(currentAccount).isUnreadSortPriority(dialog);
+            memo.put(dialog.id, priority);
+        }
+        return priority;
+    }
+
+    private void sortDialogsMemoized(List<TLRPC.Dialog> dialogs, Comparator<TLRPC.Dialog> comparator) {
+        if (!NaConfig.INSTANCE.getSortByUnread().Bool()) {
+            Collections.sort(dialogs, comparator);
+            return;
+        }
+        unreadPriorityMemo.set(new LongSparseArray<>());
+        try {
+            Collections.sort(dialogs, comparator);
+        } finally {
+            unreadPriorityMemo.remove();
+        }
+    }
     private final Comparator<TLRPC.Dialog> dialogDateComparator = (dialog1, dialog2) -> {
         int pinnedNum1 = sortingDialogFilter == null ? Integer.MIN_VALUE : sortingDialogFilter.pinnedDialogs.get(dialog1.id, Integer.MIN_VALUE);
         int pinnedNum2 = sortingDialogFilter == null ? Integer.MIN_VALUE : sortingDialogFilter.pinnedDialogs.get(dialog2.id, Integer.MIN_VALUE);
@@ -1502,8 +1532,8 @@ public class MessagesController extends BaseController implements NotificationCe
             }
         }
         if (NaConfig.INSTANCE.getSortByUnread().Bool()) {
-            boolean priority1 = ChatsHelper.getInstance(currentAccount).isUnreadSortPriority(dialog1);
-            boolean priority2 = ChatsHelper.getInstance(currentAccount).isUnreadSortPriority(dialog2);
+            boolean priority1 = isUnreadSortPriorityMemo(dialog1);
+            boolean priority2 = isUnreadSortPriorityMemo(dialog2);
             if (priority1 != priority2) {
                 return priority1 ? -1 : 1;
             }
@@ -1523,7 +1553,7 @@ public class MessagesController extends BaseController implements NotificationCe
         if (dialogs == null) {
             return;
         }
-        Collections.sort(dialogs, dialogComparator);
+        sortDialogsMemoized(dialogs, dialogComparator);
     }
 
     private Comparator<TLRPC.Dialog> dialogComparator = (dialog1, dialog2) -> {
@@ -1545,8 +1575,8 @@ public class MessagesController extends BaseController implements NotificationCe
             }
         }
         if (NaConfig.INSTANCE.getSortByUnread().Bool()) {
-            boolean priority1 = ChatsHelper.getInstance(currentAccount).isUnreadSortPriority(dialog1);
-            boolean priority2 = ChatsHelper.getInstance(currentAccount).isUnreadSortPriority(dialog2);
+            boolean priority1 = isUnreadSortPriorityMemo(dialog1);
+            boolean priority2 = isUnreadSortPriorityMemo(dialog2);
             if (priority1 != priority2) {
                 return priority1 ? -1 : 1;
             }
@@ -9648,6 +9678,86 @@ public class MessagesController extends BaseController implements NotificationCe
         return messageObject;
     }
 
+    /**
+     * Same lookup order as {@link #getExistingMessageInAnyWay}, but returns the raw message and
+     * matches the database row at the TLRPC level, so no MessageObject is built for it.
+     */
+    public TLRPC.Message getExistingMessageOwnerInAnyWay(Long dialogId, Integer messageId) {
+        if (dialogId == null || messageId == null) {
+            return null;
+        }
+        long did = dialogId;
+        int mid = messageId;
+        MessageObject messageObject = null;
+        try {
+            if (did == 0) {
+                messageObject = dialogMessagesByIds.get(mid);
+                if (!AyuMessageUtils.matchesDeletionMessage(currentAccount, did, mid, messageObject)) {
+                    messageObject = null;
+                }
+            } else {
+                ArrayList<MessageObject> list = dialogMessage.get(did);
+                if (list != null) {
+                    for (int i = 0; i < list.size(); i++) {
+                        MessageObject obj = list.get(i);
+                        if (AyuMessageUtils.matchesDeletionMessage(currentAccount, did, mid, obj)) {
+                            messageObject = obj;
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            FileLog.e(e);
+        }
+        if (messageObject != null) {
+            return messageObject.messageOwner;
+        }
+        try {
+            TLRPC.Message message = getMessagesStorage().getMessageLegit(did, mid);
+            if (message != null) {
+                int actualId = message.ephemeralAnchorMsgId != 0 ? message.ephemeralAnchorMsgId : message.id;
+                long actualDialogId = MessageObject.getDialogId(message);
+                if (actualId == mid && actualDialogId != 0 && (dialogId != 0 ? actualDialogId == did
+                        : (mid > 0 && !DialogObject.isEncryptedDialog(actualDialogId) && message.peer_id != null && message.peer_id.channel_id == 0))) {
+                    // The MessageObject constructor (generateCaption) used to do this to the owner for extended media.
+                    if (message.media != null && !(message.media instanceof TLRPC.TL_messageMediaPaidMedia) && !message.media.extended_media.isEmpty()) {
+                        message.message = message.media.description;
+                    }
+                    return message;
+                }
+            }
+        } catch (Throwable e) {
+            FileLog.e(e);
+        }
+        try {
+            messageObject = getNotificationsController().findPushedOrPopupMessage(did, mid);
+            if (AyuMessageUtils.matchesDeletionMessage(currentAccount, did, mid, messageObject)) {
+                return messageObject.messageOwner;
+            }
+        } catch (Throwable e) {
+            FileLog.e(e);
+        }
+        try {
+            BaseFragment lastFragment = LaunchActivity.getLastFragment();
+            if (lastFragment instanceof ChatActivity && lastFragment.getCurrentAccount() == currentAccount) {
+                ChatActivity chatActivity = (ChatActivity) lastFragment;
+                if (chatActivity.getDialogId() == did || did == 0) {
+                    ArrayList<MessageObject> list = new ArrayList<>(chatActivity.messages);
+                    for (int i = 0; i < list.size(); i++) {
+                        MessageObject obj = list.get(i);
+                        if (AyuMessageUtils.matchesDeletionMessage(currentAccount, did, mid, obj)) {
+                            return obj.messageOwner;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            FileLog.e(e);
+        }
+        return null;
+    }
+
     public void deleteMessages(ArrayList<Integer> messages, ArrayList<Long> randoms, TLRPC.EncryptedChat encryptedChat, long dialogId, int topicId, boolean forAll, int mode) {
         deleteMessages(messages, randoms, encryptedChat, dialogId, forAll, mode, false, 0, null, topicId);
     }
@@ -11631,6 +11741,7 @@ public class MessagesController extends BaseController implements NotificationCe
     private void updatePrintingStrings() {
         LongSparseArray<LongSparseArray<CharSequence>> newStrings = new LongSparseArray<>();
         LongSparseArray<LongSparseArray<Integer>> newTypes = new LongSparseArray<>();
+        LongSparseIntArray blockePeersCopy = NekoConfig.ignoreBlocked.Bool() ? blockePeers.clone() : null;
 
         for (HashMap.Entry<Long, ConcurrentHashMap<Integer, ArrayList<PrintingUser>>> dialogEntry : printingUsers.entrySet()) {
             Long key = dialogEntry.getKey();
@@ -11641,15 +11752,20 @@ public class MessagesController extends BaseController implements NotificationCe
                 Integer threadId = threadEntry.getKey();
                 ArrayList<PrintingUser> arr = threadEntry.getValue();
                 // ignoreBlocked start
-                if (NekoConfig.ignoreBlocked.Bool()) {
-                    LongSparseIntArray blockePeersCopy = blockePeers.clone();
-                    ArrayList<PrintingUser> filteredArr = new ArrayList<>();
-                    for (PrintingUser pu : arr) {
-                        if (blockePeersCopy.indexOfKey(pu.userId) < 0 && !AyuFilter.isCustomFilteredPeer(pu.userId)) {
+                if (blockePeersCopy != null) {
+                    ArrayList<PrintingUser> filteredArr = null;
+                    for (int i = 0, n = arr.size(); i < n; i++) {
+                        PrintingUser pu = arr.get(i);
+                        boolean blocked = blockePeersCopy.indexOfKey(pu.userId) >= 0 || AyuFilter.isCustomFilteredPeer(pu.userId);
+                        if (blocked && filteredArr == null) {
+                            filteredArr = new ArrayList<>(arr.subList(0, i));
+                        } else if (!blocked && filteredArr != null) {
                             filteredArr.add(pu);
                         }
                     }
-                    arr = filteredArr;
+                    if (filteredArr != null) {
+                        arr = filteredArr;
+                    }
                 }
                 if (arr.isEmpty()) {
                     continue;
@@ -18126,15 +18242,19 @@ public class MessagesController extends BaseController implements NotificationCe
         ArrayList<MessageObject> notificationSnapshot = getNotificationsController().getDeletionSnapshot(resolvedDialogId, messageIds);
         AyuMessagesController.getInstance().executeAsync(() -> {
             ArrayList<TLRPC.Message> archive = new ArrayList<>();
+            // Chats explicitly on the "never save" list would be rejected later anyway.
+            boolean neverSave = resolvedDialogId != 0 && AyuSaveExclusions.getChatSavingType(resolvedDialogId) == AyuSaveExclusions.TYPE_NEVER;
             for (int messageId : messageIds) {
-                MessageObject existing = getExistingMessageInAnyWay(resolvedDialogId, messageId);
+                if (neverSave) continue;
+                TLRPC.Message existing = getExistingMessageOwnerInAnyWay(resolvedDialogId, messageId);
                 if (existing == null) {
-                    existing = AyuMessageUtils.extractFromUpdates(currentAccount, resolvedDialogId, messageId,
+                    MessageObject existingObject = AyuMessageUtils.extractFromUpdates(currentAccount, resolvedDialogId, messageId,
                             null, null, notificationSnapshot);
+                    existing = existingObject != null ? existingObject.messageOwner : null;
                 }
-                if (existing != null && existing.messageOwner != null && existing.getDialogId() != 0) {
-                    existing.messageOwner.dialog_id = existing.getDialogId();
-                    archive.add(existing.messageOwner);
+                if (existing != null && MessageObject.getDialogId(existing) != 0) {
+                    existing.dialog_id = MessageObject.getDialogId(existing);
+                    archive.add(existing);
                 }
             }
             AyuMessagesController.getInstance().saveCollectedMessages(currentAccount, resolvedDialogId, archive, clear);
@@ -20367,21 +20487,24 @@ public class MessagesController extends BaseController implements NotificationCe
             for (int a = 0, size = deletedMessages.size(); a < size; a++) {
                 var possibleDialogId = deletedMessages.keyAt(a);
                 var messageIds = deletedMessages.valueAt(a);
+                // Chats explicitly on the "never save" list would be rejected later anyway.
+                if (possibleDialogId != 0 && AyuSaveExclusions.getChatSavingType(possibleDialogId) == AyuSaveExclusions.TYPE_NEVER) continue;
                 for (var msgId : messageIds) {
-                    MessageObject existing = getExistingMessageInAnyWay(possibleDialogId, msgId);
+                    TLRPC.Message existing = getExistingMessageOwnerInAnyWay(possibleDialogId, msgId);
                     if (existing == null) {
-                        existing = AyuMessageUtils.extractFromUpdates(currentAccount, possibleDialogId, msgId,
+                        MessageObject existingObject = AyuMessageUtils.extractFromUpdates(currentAccount, possibleDialogId, msgId,
                                 messages, messagesArr, pushMessages);
+                        existing = existingObject != null ? existingObject.messageOwner : null;
                     }
-                    if (existing == null || existing.messageOwner == null) continue;
-                    long actualDialogId = existing.getDialogId();
+                    if (existing == null) continue;
+                    long actualDialogId = MessageObject.getDialogId(existing);
                     if (actualDialogId == 0 || !collected.add(new AyuMessageKey(actualDialogId, msgId))) continue;
                     ArrayList<TLRPC.Message> archive = messagesToArchive.get(actualDialogId);
                     if (archive == null) {
                         messagesToArchive.put(actualDialogId, archive = new ArrayList<>());
                     }
-                    existing.messageOwner.dialog_id = actualDialogId;
-                    archive.add(existing.messageOwner);
+                    existing.dialog_id = actualDialogId;
+                    archive.add(existing);
                 }
             }
             for (int a = 0; a < messagesToArchive.size(); a++) {
@@ -22848,7 +22971,7 @@ public class MessagesController extends BaseController implements NotificationCe
         dialogsForward.clear();
         sortingDialogFilter = filter;
         try {
-            Collections.sort(allDialogs, dialogDateComparator);
+            sortDialogsMemoized(allDialogs, dialogDateComparator);
         } catch (Exception e) {
             FileLog.e(e);
         }
@@ -22878,7 +23001,7 @@ public class MessagesController extends BaseController implements NotificationCe
             }
         }
         try {
-            Collections.sort(allDialogs, dialogComparator);
+            sortDialogsMemoized(allDialogs, dialogComparator);
         } catch (Exception e) {}
     }
 
@@ -23061,7 +23184,7 @@ public class MessagesController extends BaseController implements NotificationCe
                 dialogs.clear();
                 dialogsForward.clear();
                 try {
-                    Collections.sort(allDialogs, dialogDateComparator);
+                    sortDialogsMemoized(allDialogs, dialogDateComparator);
                 } catch (Exception e) {
                     FileLog.e(e);
                 }
@@ -23095,7 +23218,7 @@ public class MessagesController extends BaseController implements NotificationCe
         }
 
         try {
-            Collections.sort(allDialogs, dialogComparator);
+            sortDialogsMemoized(allDialogs, dialogComparator);
         } catch (Exception e) {}
         isLeftPromoChannel = true;
         if (promoDialog != null && promoDialog.id < 0) {

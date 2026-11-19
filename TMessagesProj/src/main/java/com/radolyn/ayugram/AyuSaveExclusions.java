@@ -8,6 +8,7 @@ import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.MessagesStorage;
 import org.telegram.tgnet.TLRPC;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -52,38 +53,106 @@ public final class AyuSaveExclusions {
     private AyuSaveExclusions() {
     }
 
+    /** Immutable view of everything {@link #isSavingAllowedFor} reads from the preferences. */
+    private static final class Snapshot {
+        final Set<String> never;
+        final Set<String> always;
+        final int neverFlags;
+        final int alwaysFlags;
+        final boolean whitelist;
+
+        Snapshot(Set<String> never, Set<String> always, int neverFlags, int alwaysFlags, boolean whitelist) {
+            this.never = Collections.unmodifiableSet(never);
+            this.always = Collections.unmodifiableSet(always);
+            this.neverFlags = neverFlags;
+            this.alwaysFlags = alwaysFlags;
+            this.whitelist = whitelist;
+        }
+    }
+
+    private static final Object snapshotLock = new Object();
+    private static volatile Snapshot snapshot;
+    private static int snapshotGeneration;
+    private static SharedPreferences listenedPreferences;
+    // SharedPreferences keeps listeners weakly, so this has to stay referenced from a static field.
+    private static final SharedPreferences.OnSharedPreferenceChangeListener prefsListener = (prefs, key) -> {
+        // Also catches writes made outside this class (settings restore), key is null on clear().
+        if (key == null || key.startsWith("ayuSaveExclusions") || key.startsWith(LEGACY_PREFIX)) {
+            invalidateSnapshot();
+        }
+    };
+
+    /** Drops the cached snapshot; call after anything wrote the exclusion preferences directly. */
+    public static void invalidateSnapshot() {
+        synchronized (snapshotLock) {
+            snapshotGeneration++;
+            snapshot = null;
+        }
+    }
+
+    private static Snapshot getSnapshot() {
+        Snapshot current = snapshot;
+        if (current != null) {
+            return current;
+        }
+        ensureMigrated();
+        int generation;
+        synchronized (snapshotLock) {
+            generation = snapshotGeneration;
+        }
+        SharedPreferences preferences = NekoConfig.getPreferences();
+        current = new Snapshot(
+                getStoredIds(preferences, KEY_NEVER),
+                getStoredIds(preferences, KEY_ALWAYS),
+                preferences.getInt(KEY_NEVER_FLAGS, 0),
+                preferences.getInt(KEY_ALWAYS_FLAGS, 0),
+                preferences.getBoolean(KEY_WHITELIST, false));
+        synchronized (snapshotLock) {
+            if (generation == snapshotGeneration) {
+                snapshot = current;
+                if (listenedPreferences != preferences) {
+                    listenedPreferences = preferences;
+                    preferences.registerOnSharedPreferenceChangeListener(prefsListener);
+                }
+            }
+        }
+        return current;
+    }
+
     /** True when saving only happens in the included chats. */
     public static boolean isWhitelist() {
-        ensureMigrated();
-        return NekoConfig.getPreferences().getBoolean(KEY_WHITELIST, false);
+        return getSnapshot().whitelist;
     }
 
     public static void setWhitelist(boolean whitelist) {
         NekoConfig.getPreferences().edit().putBoolean(KEY_WHITELIST, whitelist).apply();
+        invalidateSnapshot();
     }
 
     /** Ids explicitly saved ({@code always}) or skipped ({@code always == false}). */
     public static Set<String> getIds(boolean always) {
-        ensureMigrated();
-        return getStoredIds(NekoConfig.getPreferences(), always ? KEY_ALWAYS : KEY_NEVER);
+        Snapshot current = getSnapshot();
+        return new HashSet<>(always ? current.always : current.never);
     }
 
     public static void setIds(boolean always, Set<String> ids) {
         NekoConfig.getPreferences().edit()
                 .putStringSet(always ? KEY_ALWAYS : KEY_NEVER, new HashSet<>(ids))
                 .apply();
+        invalidateSnapshot();
     }
 
     /** Category bitmask that applies to the given set. */
     public static int getFlags(boolean always) {
-        ensureMigrated();
-        return NekoConfig.getPreferences().getInt(always ? KEY_ALWAYS_FLAGS : KEY_NEVER_FLAGS, 0);
+        Snapshot current = getSnapshot();
+        return always ? current.alwaysFlags : current.neverFlags;
     }
 
     public static void setFlags(boolean always, int flags) {
         NekoConfig.getPreferences().edit()
                 .putInt(always ? KEY_ALWAYS_FLAGS : KEY_NEVER_FLAGS, flags)
                 .apply();
+        invalidateSnapshot();
     }
 
     /** Applies a category bit to the given set. */
@@ -98,14 +167,15 @@ public final class AyuSaveExclusions {
      */
     public static boolean isSavingAllowedFor(int accountId, long dialogId, long botUserId) {
         final String key = String.valueOf(dialogId);
-        if (getIds(false).contains(key)) {
+        final Snapshot current = getSnapshot();
+        if (current.never.contains(key)) {
             return false;
         }
-        if (getIds(true).contains(key)) {
+        if (current.always.contains(key)) {
             return true;
         }
-        final int alwaysFlags = getFlags(true);
-        final int neverFlags = getFlags(false);
+        final int alwaysFlags = current.alwaysFlags;
+        final int neverFlags = current.neverFlags;
         final int union = alwaysFlags | neverFlags;
         if ((union & FLAG_BOT_CHAT) != 0 && DialogObject.isChatDialog(dialogId) && botUserId > 0) {
             TLRPC.User user = getUser(accountId, botUserId);
@@ -122,16 +192,17 @@ public final class AyuSaveExclusions {
                 return true;
             }
         }
-        return !isWhitelist();
+        return !current.whitelist;
     }
 
     /** Explicit rule for a chat: {@link #TYPE_DEFAULT}, {@link #TYPE_NEVER} or {@link #TYPE_ALWAYS}. */
     public static int getChatSavingType(long dialogId) {
         String key = String.valueOf(dialogId);
-        if (getIds(false).contains(key)) {
+        Snapshot current = getSnapshot();
+        if (current.never.contains(key)) {
             return TYPE_NEVER;
         }
-        return getIds(true).contains(key) ? TYPE_ALWAYS : TYPE_DEFAULT;
+        return current.always.contains(key) ? TYPE_ALWAYS : TYPE_DEFAULT;
     }
 
     public static void setChatSavingType(long dialogId, int type) {
@@ -227,6 +298,7 @@ public final class AyuSaveExclusions {
                 .putStringSet(KEY_NEVER, never)
                 .putBoolean(KEY_MIGRATED, true)
                 .apply();
+        invalidateSnapshot();
     }
 
     private static Set<String> getStoredIds(SharedPreferences preferences, String key) {

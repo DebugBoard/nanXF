@@ -1129,6 +1129,9 @@ public class EmojiHelper extends BaseRemoteHelper implements NotificationCenter.
     }
 
     public static boolean replaceAppleLogo(Spannable s, Paint.FontMetricsInt fontMetrics) {
+        if (TextUtils.indexOf(s, APPLE_LOGO_CHAR) < 0) {
+            return false;
+        }
         boolean replaced = false;
         ColoredImageSpan[] imageSpans = s.getSpans(0, s.length(), ColoredImageSpan.class);
         for (int i = 0, length = s.length(); i < length; i++) {

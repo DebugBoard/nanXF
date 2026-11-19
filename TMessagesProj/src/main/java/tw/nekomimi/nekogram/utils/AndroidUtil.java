@@ -335,14 +335,34 @@ public class AndroidUtil {
     }
 
     public static boolean contentEquals(InputStream first, InputStream second) throws IOException {
-        InputStream firstBuffered = first instanceof BufferedInputStream ? first : new BufferedInputStream(first);
-        InputStream secondBuffered = second instanceof BufferedInputStream ? second : new BufferedInputStream(second);
-        int firstByte;
-        while ((firstByte = firstBuffered.read()) != -1) {
-            if (firstByte != secondBuffered.read()) {
+        byte[] firstBuffer = new byte[8192];
+        byte[] secondBuffer = new byte[8192];
+        while (true) {
+            int firstRead = readFully(first, firstBuffer);
+            int secondRead = readFully(second, secondBuffer);
+            if (firstRead != secondRead) {
                 return false;
             }
+            for (int i = 0; i < firstRead; i++) {
+                if (firstBuffer[i] != secondBuffer[i]) {
+                    return false;
+                }
+            }
+            if (firstRead < firstBuffer.length) {
+                return true;
+            }
         }
-        return secondBuffered.read() == -1;
+    }
+
+    private static int readFully(InputStream stream, byte[] buffer) throws IOException {
+        int total = 0;
+        while (total < buffer.length) {
+            int read = stream.read(buffer, total, buffer.length - total);
+            if (read < 0) {
+                break;
+            }
+            total += read;
+        }
+        return total;
     }
 }
