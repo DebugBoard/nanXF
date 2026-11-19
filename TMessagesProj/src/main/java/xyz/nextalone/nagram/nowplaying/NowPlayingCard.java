@@ -293,7 +293,7 @@ public class NowPlayingCard extends FrameLayout {
         String newPreview = dto.getPreviewUrl();
         if (!TextUtils.equals(newPreview, currentPreviewUrl)) {
             currentPreviewUrl = newPreview;
-            initializePlayer();
+            releasePlayer();
         }
         invalidate();
     }
@@ -329,7 +329,10 @@ public class NowPlayingCard extends FrameLayout {
     }
 
     private void togglePlayPause() {
-        if (player == null) return;
+        if (player == null) {
+            initializePlayer();
+            if (player == null) return;
+        }
         if (player.isPlaying()) {
             player.pause();
             abandonAudioFocus();
@@ -386,9 +389,6 @@ public class NowPlayingCard extends FrameLayout {
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         emoji.attach();
-        if (player == null && nowPlayingCardData != null) {
-            initializePlayer();
-        }
     }
 
     @Override
