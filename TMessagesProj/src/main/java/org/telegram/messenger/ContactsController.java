@@ -114,8 +114,10 @@ public class ContactsController extends BaseController {
 
         private Runnable checkRunnable = () -> {
             for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-                if (UserConfig.getInstance(a).isClientActivated()) {
-                    ConnectionsManager.getInstance(a).resumeNetworkMaybe();
+                UserConfig userConfig = UserConfig.getInstance(a);
+                // Phonebook changes are irrelevant with contact sync off. The network is resumed only
+                // once a real change is detected (see checkContacts), not on every provider ping.
+                if (userConfig.isClientActivated() && userConfig.syncContacts) {
                     ContactsController.getInstance(a).checkContacts();
                 }
             }
@@ -391,6 +393,11 @@ public class ContactsController extends BaseController {
 
     public void checkAppAccount() {
         systemAccount = null;
+        if (!getUserConfig().isClientActivated() && currentAccount != UserConfig.selectedAccount) {
+            // Empty slot: nothing account-specific to do, and the stale-account prune below is identical for
+            // every slot, so let the selected account's call do it once instead of 10 AccountManager IPCs.
+            return;
+        }
         Utilities.globalQueue.postRunnable(() -> {
             AccountManager am = AccountManager.get(ApplicationLoader.applicationContext);
             try {
@@ -481,6 +488,7 @@ public class ContactsController extends BaseController {
                 if (BuildVars.LOGS_ENABLED) {
                     FileLog.d("detected contacts change");
                 }
+                getConnectionsManager().resumeNetworkMaybe();
                 performSyncPhoneBook(getContactsCopy(contactsBook), true, false, true, false, true, false);
             }
         });

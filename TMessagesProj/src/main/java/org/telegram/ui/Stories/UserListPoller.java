@@ -20,6 +20,8 @@ import org.telegram.ui.Components.RecyclerListView;
 
 import java.util.ArrayList;
 
+import xyz.nextalone.nagram.NaConfig;
+
 public class UserListPoller {
 
     private static UserListPoller[] istances = new UserListPoller[UserConfig.MAX_ACCOUNT_COUNT];
@@ -95,6 +97,9 @@ public class UserListPoller {
     };
 
     public void checkList(RecyclerListView recyclerListView) {
+        if (NaConfig.INSTANCE.getDisableStories().Bool()) {
+            return; // story rings are hidden, so stories.getPeerMaxIDs polling is wasted
+        }
         long currentTime = System.currentTimeMillis();
         dialogIds.clear();
         for (int i = 0; i < recyclerListView.getChildCount(); i++) {

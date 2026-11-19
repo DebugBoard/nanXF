@@ -40,7 +40,6 @@ import androidx.core.content.FileProvider;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
-import com.radolyn.ayugram.utils.LastSeenHelper;
 
 import org.json.JSONObject;
 import org.telegram.messenger.utils.Choreographer60FpsContent;
@@ -60,7 +59,6 @@ import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 
 import tw.nekomimi.nekogram.NekoConfig;
-import org.maplibre.android.MapLibre;
 import xyz.nextalone.nagram.NaConfig;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
 import com.exteragram.messenger.ExteraConfig;
@@ -303,7 +301,6 @@ public class ApplicationLoader extends Application {
         SharedConfig.loadConfig();
         NekoConfig.init();
         NaConfig.init();
-        LastSeenHelper.preload();
         ExteraConfig.init();
         installPluginCrashHandler();
         registerPluginLifecycleCallbacks();
@@ -412,10 +409,6 @@ public class ApplicationLoader extends Application {
         }
 
         applicationHandler = new Handler(applicationContext.getMainLooper());
-
-        if (NekoConfig.useOpenFreeMap.Bool()) {
-            MapLibre.getInstance(applicationContext);
-        }
 
         LauncherIconController.tryFixLauncherIconIfNeeded();
         ProxyRotationController.init();

@@ -102,6 +102,14 @@ public abstract class BaseRemoteHelper {
         load(false, delegate);
     }
 
+    // Report resolve failures instead of dropping them, so callers (update check, emoji loader) record
+    // the attempt and don't retry on every resume / stay stuck in a loading state.
+    private void notifyResolveFailed(TLRPC.TL_error error, Delegate delegate) {
+        if (delegate != null) {
+            onError(error != null ? error.text : "RESOLVE_FAILED", delegate);
+        }
+    }
+
     private void load(boolean forceRefreshAccessHash, Delegate delegate) {
         var tag = "#" + getTag();
         TLRPC.TL_messages_search req = new TLRPC.TL_messages_search();
@@ -115,9 +123,11 @@ public abstract class BaseRemoteHelper {
             req1.username = CHANNEL_METADATA_NAME;
             getConnectionsManager().sendRequest(req1, (response1, error1) -> {
                 if (error1 != null) {
+                    notifyResolveFailed(error1, delegate);
                     return;
                 }
                 if (!(response1 instanceof TLRPC.TL_contacts_resolvedPeer)) {
+                    notifyResolveFailed(null, delegate);
                     return;
                 }
                 TLRPC.TL_contacts_resolvedPeer resolvedPeer = (TLRPC.TL_contacts_resolvedPeer) response1;
@@ -125,6 +135,7 @@ public abstract class BaseRemoteHelper {
                 getMessagesController().putChats(resolvedPeer.chats, false);
                 getMessagesStorage().putUsersAndChats(resolvedPeer.users, resolvedPeer.chats, false, true);
                 if ((resolvedPeer.chats == null || resolvedPeer.chats.size() == 0)) {
+                    notifyResolveFailed(null, delegate);
                     return;
                 }
                 req.peer = new TLRPC.TL_inputPeerChannel();
