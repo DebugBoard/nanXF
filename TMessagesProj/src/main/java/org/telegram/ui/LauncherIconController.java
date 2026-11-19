@@ -9,7 +9,14 @@ import org.telegram.messenger.R;
 
 public class LauncherIconController {
     public static void tryFixLauncherIconIfNeeded() {
+        // DARKBLUE is the default and sits 8th in the enum; check it first to avoid 7 PackageManager IPCs per start.
+        if (isEnabled(LauncherIcon.DARKBLUE)) {
+            return;
+        }
         for (LauncherIcon icon : LauncherIcon.values()) {
+            if (icon == LauncherIcon.DARKBLUE) {
+                continue;
+            }
             if (isEnabled(icon)) {
                 return;
             }

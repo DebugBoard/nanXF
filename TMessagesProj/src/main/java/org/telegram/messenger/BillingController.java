@@ -145,6 +145,10 @@ public class BillingController implements PurchasesUpdatedListener, BillingClien
         if (isReady()) {
             return;
         }
+        if (BuildVars.useInvoiceBilling()) {
+            // Play Billing is never connected in invoice mode; currency exponents are extracted lazily in getCurrencyExp().
+            return;
+        }
         try {
             BillingUtilities.extractCurrencyExp(currencyExpMap);
             if (!BuildVars.useInvoiceBilling()) {
