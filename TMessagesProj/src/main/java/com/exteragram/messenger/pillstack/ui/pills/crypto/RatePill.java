@@ -115,12 +115,19 @@ public abstract class RatePill extends BasePill implements NotificationCenter.No
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (PillStackConfig.checkAndClearPendingUpdate(getPillId())
-                || cache.cachedPrice.get() == null
-                || isRefreshDue()) {
+        if (PillStackConfig.checkAndClearPendingUpdate(getPillId())) {
             onUpdateData(true);
         }
         NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.pillStackSettingsChanged);
+    }
+
+    @Override
+    protected boolean onRefreshActive() {
+        if (cache.cachedPrice.get() == null || isRefreshDue()) {
+            onUpdateData(true);
+            return true;
+        }
+        return false;
     }
 
     @Override

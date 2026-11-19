@@ -127,12 +127,19 @@ public class WeatherPill extends BasePill implements NotificationCenter.Notifica
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (PillStackConfig.checkAndClearPendingUpdate(getPillId())
-                || Weather.getCached() == null
-                || isRefreshDue()) {
+        if (PillStackConfig.checkAndClearPendingUpdate(getPillId())) {
             onUpdateData(true);
         }
         NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.pillStackSettingsChanged);
+    }
+
+    @Override
+    protected boolean onRefreshActive() {
+        if (Weather.getCached() == null || isRefreshDue()) {
+            onUpdateData(true);
+            return true;
+        }
+        return false;
     }
 
     @Override

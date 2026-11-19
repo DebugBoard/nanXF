@@ -75,6 +75,7 @@ public class FragmentSearchField extends FrameLayout implements FactorAnimator.T
     private BlurredBackgroundDrawable blurredBackgroundDrawable;
 
     private PillStackView pillStackView;
+    private ArrayList<PillRegistry.PillInfo> builtPillInfos;
     private boolean showPillStack;
 
     public FragmentSearchField(Context context, Theme.ResourcesProvider resourcesProvider) {
@@ -393,22 +394,33 @@ public class FragmentSearchField extends FrameLayout implements FactorAnimator.T
             } else {
                 view.setVisibilityFactor(1f - animatorCloseIconVisible.getFloatValue());
             }
+            final ArrayList<PillRegistry.PillInfo> infos = new ArrayList<>();
+            for (int i = 0; i < PillStackConfig.activePills.size(); i++) {
+                PillRegistry.PillInfo info = PillRegistry.getPillInfo(PillStackConfig.activePills.get(i));
+                if (info != null) {
+                    infos.add(info);
+                }
+            }
+            if (view.getPillsCount() != 0 && infos.equals(builtPillInfos)) {
+                // the configured pill list has not changed, keep the existing pills
+                return;
+            }
             view.clearPills();
             int targetIndex = 0;
-            for (int i = 0; i < PillStackConfig.activePills.size(); i++) {
-                Integer pillId = PillStackConfig.activePills.get(i);
-                PillRegistry.PillInfo info = PillRegistry.getPillInfo(pillId);
-                if (info == null) continue;
+            for (int i = 0; i < infos.size(); i++) {
+                PillRegistry.PillInfo info = infos.get(i);
                 BasePill pill = info.creator().create(getContext(), resourcesProvider);
                 view.addPill(pill);
-                if (pillId == PillStackConfig.lastActivePillId) {
+                if (info.id() == PillStackConfig.lastActivePillId) {
                     targetIndex = view.getPillsCount() - 1;
                 }
             }
+            builtPillInfos = infos;
             if (view.getPillsCount() == 0) {
                 if (pillStackView == view) {
                     pillStackView = null;
                 }
+                builtPillInfos = null;
                 removeView(view);
                 return;
             }
@@ -416,6 +428,7 @@ public class FragmentSearchField extends FrameLayout implements FactorAnimator.T
         } else if (pillStackView != null) {
             final PillStackView view = pillStackView;
             pillStackView = null;
+            builtPillInfos = null;
             if (animate && view.getVisibility() == VISIBLE && view.getAlpha() > 0f) {
                 view.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(250)
                         .setInterpolator(CubicBezierInterpolator.EASE_OUT_QUINT)
