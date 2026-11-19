@@ -4878,8 +4878,33 @@ public class QrShareView extends View {
         org.telegram.messenger.NotificationCenter.getInstance(currentAccount).addWeakObserver(giftsObserver, org.telegram.messenger.NotificationCenter.starUserGiftsLoaded);
         loadGifts(); // pages that came while detached
         sensors = (android.hardware.SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
-        final android.hardware.Sensor g = sensors != null ? sensors.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) : null;
-        if (g != null) sensors.registerListener(gravityListener, g, android.hardware.SensorManager.SENSOR_DELAY_GAME);
+        if (sensorsActive) registerGravity();
+    }
+
+    private boolean sensorsActive = true;
+    private boolean gravityRegistered;
+
+    private void registerGravity() {
+        if (gravityRegistered || sensors == null) return;
+        final android.hardware.Sensor g = sensors.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY);
+        if (g != null) {
+            sensors.registerListener(gravityListener, g, android.hardware.SensorManager.SENSOR_DELAY_GAME);
+            gravityRegistered = true;
+        }
+    }
+
+    private void unregisterGravity() {
+        if (sensors != null) sensors.unregisterListener(gravityListener);
+        gravityRegistered = false;
+        haveG = false;
+    }
+
+    /** Pauses / resumes the gravity sensor (activity paused: nothing draws, no need to sample). */
+    public void setSensorsActive(boolean active) {
+        if (sensorsActive == active) return;
+        sensorsActive = active;
+        if (!isAttachedToWindow()) return;
+        if (active) registerGravity(); else unregisterGravity();
     }
 
     @Override
@@ -4887,8 +4912,7 @@ public class QrShareView extends View {
         super.onDetachedFromWindow();
         org.telegram.messenger.NotificationCenter.getInstance(currentAccount).removeObserver(giftsObserver, org.telegram.messenger.NotificationCenter.starUserGiftsLoaded);
         removeCallbacks(prewarmGiftsRunnable);
-        if (sensors != null) sensors.unregisterListener(gravityListener);
-        haveG = false;
+        unregisterGravity();
         // detached mid-press (no UP / CANCEL): no wave may wait for the next attach
         pressedRipple = -1;
         java.util.Arrays.fill(releaseT, 0);
