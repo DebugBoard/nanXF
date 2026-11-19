@@ -615,18 +615,41 @@ public class Weather {
                     try {
                         final Utilities.Callback<Location>[] callback = new Utilities.Callback[] { whenGot };
                         final LocationListener[] listenerArr = new LocationListener[] { null };
+                        final Runnable[] timeoutArr = new Runnable[] { null };
                         final LocationListener listener = location -> {
+                            if (timeoutArr[0] != null) {
+                                AndroidUtilities.cancelRunOnUIThread(timeoutArr[0]);
+                                timeoutArr[0] = null;
+                            }
                             if (listenerArr[0] != null) {
                                 lm.removeUpdates(listenerArr[0]);
                                 listenerArr[0] = null;
                             }
                             if (callback[0] != null) {
-                                callback[0].run(location);
+                                Utilities.Callback<Location> cb = callback[0];
                                 callback[0] = null;
+                                cb.run(location);
                             }
                         };
                         listenerArr[0] = listener;
+                        timeoutArr[0] = () -> {
+                            timeoutArr[0] = null;
+                            if (listenerArr[0] != null) {
+                                try {
+                                    lm.removeUpdates(listenerArr[0]);
+                                } catch (Exception e) {
+                                    FileLog.e(e);
+                                }
+                                listenerArr[0] = null;
+                            }
+                            if (callback[0] != null) {
+                                Utilities.Callback<Location> cb = callback[0];
+                                callback[0] = null;
+                                cb.run(null);
+                            }
+                        };
                         lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1, 0, listener);
+                        AndroidUtilities.runOnUIThread(timeoutArr[0], 30000);
                     } catch (Exception e) {
                         FileLog.e(e);
                         whenGot.run(null);

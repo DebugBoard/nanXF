@@ -248,6 +248,8 @@ public class MapLibreMapsProvider implements IMapsProvider {
         private ITouchInterceptor interceptInterceptor;
         private Runnable onLayoutListener;
         MlIMap imap;
+        boolean hostPaused;
+        private boolean destroyed;
 
         private MlIMapView(Context context) {
             MapLibre.getInstance(context);
@@ -320,8 +322,10 @@ public class MapLibreMapsProvider implements IMapsProvider {
         @Override
         public void getMapAsync(Consumer<IMap> callback) {
             mapView.getMapAsync(mlMap -> {
+                if (destroyed) return;
                 mlMap.setMaxZoomPreference(MAX_ZOOM);
                 mlMap.setStyle(new Style.Builder().fromUri(BRIGHT_STYLE), style -> {
+                    if (destroyed) return;
                     MlIMap map = new MlIMap(this, mlMap, style);
                     imap = map;
                     callback.accept(map);
@@ -330,10 +334,18 @@ public class MapLibreMapsProvider implements IMapsProvider {
         }
 
         @Override
-        public void onResume() { mapView.onResume(); }
+        public void onResume() {
+            hostPaused = false;
+            mapView.onResume();
+            if (imap != null) imap.onHostResume();
+        }
 
         @Override
-        public void onPause() { mapView.onPause(); }
+        public void onPause() {
+            hostPaused = true;
+            if (imap != null) imap.onHostPause();
+            mapView.onPause();
+        }
 
         @Override
         public void onCreate(Bundle savedInstance) {
@@ -343,6 +355,7 @@ public class MapLibreMapsProvider implements IMapsProvider {
 
         @Override
         public void onDestroy() {
+            destroyed = true;
             if (imap != null) {
                 imap.onDestroy();
                 imap = null;
@@ -419,8 +432,26 @@ public class MapLibreMapsProvider implements IMapsProvider {
 
         void onDestroy() {
             destroyed = true;
-            stopLocationIfIdle();
+            locationConsumer = null;
+            visualLocationEnabled = false;
+            if (locationProvider != null) {
+                locationProvider.stop();
+            }
+            locationStarted = false;
             currentStyle = null;
+        }
+
+        void onHostPause() {
+            if (locationProvider != null) {
+                locationProvider.stop();
+            }
+            locationStarted = false;
+        }
+
+        void onHostResume() {
+            if (visualLocationEnabled || locationConsumer != null) {
+                ensureLocationStarted();
+            }
         }
 
         private void bindToStyle(Style style) {
@@ -681,7 +712,7 @@ public class MapLibreMapsProvider implements IMapsProvider {
         }
 
         private void ensureLocationStarted() {
-            if (locationStarted) return;
+            if (locationStarted || destroyed || viewWrapper.hostPaused) return;
             locationStarted = true;
             Context ctx = viewWrapper.mapView.getContext();
             if (locationProvider == null) {
