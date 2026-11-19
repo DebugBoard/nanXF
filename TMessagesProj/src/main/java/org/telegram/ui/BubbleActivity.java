@@ -24,6 +24,7 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.MediaController;
 import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
@@ -265,6 +266,8 @@ public class BubbleActivity extends BasePermissionsActivity implements INavigati
         super.onResume();
         actionBarLayout.onResume();
         ApplicationLoader.externalInterfacePaused = false;
+        MediaController.checkGallery();
+        MediaController.getInstance().onInterfaceResumed();
         onPasscodeResume();
         if (passcodeView.getVisibility() != View.VISIBLE) {
             actionBarLayout.onResume();
