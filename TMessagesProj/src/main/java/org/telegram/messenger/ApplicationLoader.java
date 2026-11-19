@@ -419,7 +419,6 @@ public class ApplicationLoader extends Application {
 
         LauncherIconController.tryFixLauncherIconIfNeeded();
         ProxyRotationController.init();
-        ProxyPingController.init();
     }
 
     private static void installPluginCrashHandler() {
