@@ -211,6 +211,26 @@ public final class ReferenceList<T> implements Iterable<T>, ReferenceCreator<T> 
     }
   }
 
+  /**
+   * @return True when item is present and not pending removal
+   */
+  public final boolean contains (@NonNull T item) {
+    synchronized (items) {
+      int i = indexOf(item);
+      if (i != -1) {
+        return !isLocked || !itemsToRemove.contains(items.get(i));
+      }
+      if (isLocked) {
+        for (Reference<T> reference : itemsToAdd) {
+          if (reference.get() == item) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+  }
+
   public final boolean hasReferences () {
     synchronized (items) {
       if (isLocked) {

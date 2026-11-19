@@ -2661,6 +2661,7 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
         }
 
         private int unreadCount = 0;
+        private int countWidth;
         private RectF rect = new RectF();
 
         @Override
@@ -2670,8 +2671,6 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
                 return;
 
             Paint paint = Theme.dialogs_countPaint;
-            String unreadCountString = unreadCount > 99 ? "99+" : Integer.toString(unreadCount);
-            int countWidth = Math.max(AndroidUtilities.dp(12), (int) Math.ceil(Theme.dialogs_countTextPaint.measureText(unreadCountString)));
             int countLeft = getMeasuredWidth() - countWidth - AndroidUtilities.dp(20);
             int countTop = 0;
 
@@ -2688,7 +2687,7 @@ public class ActionBar extends FrameLayout implements FactorAnimator.Target, The
             if (count != unreadCount) {
                 unreadCount = count;
                 String countString = count > 99 ? "99+" : Integer.toString(count);
-                int countWidth = count == 0 ? 0 : Math.max(AndroidUtilities.dp(12), (int) Math.ceil(Theme.dialogs_countTextPaint.measureText(countString)));
+                countWidth = count == 0 ? 0 : Math.max(AndroidUtilities.dp(12), (int) Math.ceil(Theme.dialogs_countTextPaint.measureText(countString)));
                 countLayout = new StaticLayout(countString, Theme.dialogs_countTextPaint, countWidth, Layout.Alignment.ALIGN_CENTER, 1.0f, 0.0f, false);
                 invalidate();
             }

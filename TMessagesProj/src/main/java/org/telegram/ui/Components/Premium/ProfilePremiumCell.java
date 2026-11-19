@@ -41,9 +41,9 @@ public class ProfilePremiumCell extends TextCell {
         if (LiteMode.isEnabled(LiteMode.FLAG_PARTICLES)) {
             particles.process();
             particles.draw(canvas, Theme.getColor(colorKey));
-            Choreographer60FpsContent.getInstance().addFrameCallback(invalidateRunnable, 15);
+            Choreographer60FpsContent.getInstance().addFrameCallbackOnce(invalidateRunnable, 15);
         } else {
-            Choreographer60FpsContent.getInstance().removeFrameCallback(invalidateRunnable);
+            Choreographer60FpsContent.getInstance().removeFrameCallbackOnce(invalidateRunnable);
         }
         super.dispatchDraw(canvas);
     }
@@ -51,6 +51,6 @@ public class ProfilePremiumCell extends TextCell {
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        Choreographer60FpsContent.getInstance().removeFrameCallback(invalidateRunnable);
+        Choreographer60FpsContent.getInstance().removeFrameCallbackOnce(invalidateRunnable);
     }
 }
