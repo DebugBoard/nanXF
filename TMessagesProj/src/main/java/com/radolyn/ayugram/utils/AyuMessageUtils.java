@@ -1140,6 +1140,7 @@ public abstract class AyuMessageUtils {
 
     private static File processAttachment(File source, File target) {
         if (source.exists()) {
+            AyuMessagesController.ensureAttachmentsFolder();
             boolean success = AyuUtils.moveOrCopyFile(source, target);
             if (!success && BuildVars.LOGS_ENABLED) {
                 Log.e(TAG, "Failed to move/copy media file from " + source.getAbsolutePath() + " to " + target.getAbsolutePath());
@@ -1161,6 +1162,7 @@ public abstract class AyuMessageUtils {
                 Log.d(TAG, "Found encrypted file, checking for key: " + keyFile.getAbsolutePath() + " exists=" + keyFile.exists());
             }
             if (keyFile.exists()) {
+                AyuMessagesController.ensureAttachmentsFolder();
                 try (EncryptedFileInputStream inputStream = new EncryptedFileInputStream(encryptedFile, keyFile); FileOutputStream outputStream = new FileOutputStream(target)) {
                     byte[] buffer = new byte[4 * 1024];
                     int read;

@@ -535,6 +535,80 @@ public abstract class AyuHistoryHook {
         }
     }
 
+    /**
+     * 批量版 {@link #findDeletedReply}：按会话一次 getMessagesByIds 预取，结果与逐条查询一致。
+     * 预取失败、同 id 多行（逐条查询取的是第一行，顺序不保证）或未预取的键都退回逐条查询。
+     */
+    public static final class DeletedReplyBatch {
+        private final int currentAccount;
+        private final Map<ReplyKey, DeletedMessageFull> rows = new HashMap<>();
+        private final Set<ReplyKey> prefetched = new HashSet<>();
+
+        private DeletedReplyBatch(int currentAccount) {
+            this.currentAccount = currentAccount;
+        }
+
+        public MessageObject find(long dialogId, int messageId) {
+            if (messageId == 0) {
+                return null;
+            }
+            ReplyKey key = new ReplyKey(dialogId, messageId);
+            if (!prefetched.contains(key)) {
+                return findDeletedReply(currentAccount, dialogId, messageId);
+            }
+            try {
+                DeletedMessageFull full = rows.get(key);
+                if (!hasContent(full)) {
+                    return null;
+                }
+                return new MessageObject(currentAccount, map(full, currentAccount), false, false);
+            } catch (Exception e) {
+                FileLog.e("AyuHistoryHook.findDeletedReply", e);
+                return null;
+            }
+        }
+    }
+
+    public static DeletedReplyBatch prefetchDeletedReplies(int currentAccount, Map<Long, ? extends List<Integer>> idsByDialog) {
+        DeletedReplyBatch batch = new DeletedReplyBatch(currentAccount);
+        try {
+            long clientUserId = UserConfig.getInstance(currentAccount).clientUserId;
+            for (Map.Entry<Long, ? extends List<Integer>> entry : idsByDialog.entrySet()) {
+                long dialogId = entry.getKey();
+                List<DeletedMessageFull> found = AyuMessagesController.getInstance().getMessagesByIds(clientUserId, dialogId, new ArrayList<>(entry.getValue()));
+                Map<ReplyKey, DeletedMessageFull> firstRows = new HashMap<>();
+                Set<ReplyKey> duplicated = new HashSet<>();
+                if (found != null) {
+                    for (DeletedMessageFull full : found) {
+                        if (full == null || full.message == null) {
+                            continue;
+                        }
+                        ReplyKey key = new ReplyKey(dialogId, full.message.messageId);
+                        if (firstRows.putIfAbsent(key, full) != null) {
+                            duplicated.add(key);
+                        }
+                    }
+                }
+                for (Integer id : entry.getValue()) {
+                    ReplyKey key = new ReplyKey(dialogId, id);
+                    if (duplicated.contains(key)) {
+                        continue;
+                    }
+                    batch.prefetched.add(key);
+                    DeletedMessageFull full = firstRows.get(key);
+                    if (full != null) {
+                        batch.rows.put(key, full);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            FileLog.e("AyuHistoryHook.prefetchDeletedReplies", e);
+            batch.prefetched.clear();
+            batch.rows.clear();
+        }
+        return batch;
+    }
+
     /** 回复目标的消息键：跨会话回复（reply_to_peer_id）必须连会话 id 一起比 */
     private static final class ReplyKey {
         final long dialogId;

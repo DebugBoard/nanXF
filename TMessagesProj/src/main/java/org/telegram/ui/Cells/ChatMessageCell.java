@@ -470,7 +470,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
     }
 
     private boolean hasMaskedSpoilers(ArrayList<MessageObject.TextLayoutBlock> textLayoutBlocks) {
-        if (textLayoutBlocks == null) {
+        if (textLayoutBlocks == null || !AyuFilter.shouldMaskFilteredMessages()) {
             return false;
         }
         for (int i = 0; i < textLayoutBlocks.size(); i++) {

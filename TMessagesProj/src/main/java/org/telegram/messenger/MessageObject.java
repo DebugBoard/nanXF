@@ -143,6 +143,8 @@ import xyz.nextalone.nagram.NaConfig;
 import tw.nekomimi.nekogram.syntaxhighlight.SyntaxHighlight;
 
 public class MessageObject {
+    private static final Pattern FAKE_SLASH_PATTERN = Pattern.compile("∕|⁄|%E2%81%84|%E2%88%95");
+
     private static final int MESSAGE_ID_RESERVED_BITS_MASK = 0x70000000;
     private static final int MESSAGE_ID_EPHEMERAL_BITS_MASK = 0x60000000;
 
@@ -8131,8 +8133,8 @@ public class MessageObject {
                             }
                         } else {
                             String uri = charSequence.subSequence(start, end).toString();
-                            if (uri != null) {
-                                uri = uri.replaceAll("∕|⁄|%E2%81%84|%E2%88%95", "/");
+                            if (uri != null && (uri.indexOf('∕') >= 0 || uri.indexOf('⁄') >= 0 || uri.contains("%E2%81%84") || uri.contains("%E2%88%95"))) {
+                                uri = FAKE_SLASH_PATTERN.matcher(uri).replaceAll("/");
                             }
                             url = new URLSpanNoUnderline(uri);
                             if (charSequence.charAt(start) == '#') {

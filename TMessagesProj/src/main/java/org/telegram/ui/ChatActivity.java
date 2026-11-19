@@ -26070,6 +26070,29 @@ public class ChatActivity extends BaseFragment implements
                 }
                 // AyuHistoryHook: fix replyMessage
                 if (NaConfig.INSTANCE.getEnableSaveDeletedMessages().Bool()) {
+                    // batch the deleted-message lookups per dialog instead of one Room query per message
+                    HashMap<Long, ArrayList<Integer>> deletedReplyIds = null;
+                    for (int a = 0, N = messages.size(); a < N; a++) {
+                        MessageObject messageObject = messages.get(a);
+                        if (messageObject.getReplyMsgId() != 0 && (messageObject.replyMessageObject == null || messageObject.replyMessageObject.messageOwner instanceof TLRPC.TL_messageEmpty)) {
+                            int replyId = messageObject.getReplyMsgId();
+                            if (loadedMessagesMap.get(replyId) == null) {
+                                long replyDialogId = MessageObject.getReplyToDialogId(messageObject.messageOwner);
+                                if (replyDialogId == 0) {
+                                    replyDialogId = messageObject.getDialogId();
+                                }
+                                if (deletedReplyIds == null) {
+                                    deletedReplyIds = new HashMap<>();
+                                }
+                                ArrayList<Integer> deletedIdsForDialog = deletedReplyIds.get(replyDialogId);
+                                if (deletedIdsForDialog == null) {
+                                    deletedReplyIds.put(replyDialogId, deletedIdsForDialog = new ArrayList<>());
+                                }
+                                deletedIdsForDialog.add(replyId);
+                            }
+                        }
+                    }
+                    AyuHistoryHook.DeletedReplyBatch deletedReplyBatch = deletedReplyIds != null ? AyuHistoryHook.prefetchDeletedReplies(currentAccount, deletedReplyIds) : null;
                     for (int a = 0, N = messages.size(); a < N; a++) {
                         MessageObject messageObject = messages.get(a);
                         if (messageObject.getReplyMsgId() != 0 && (messageObject.replyMessageObject == null || messageObject.replyMessageObject.messageOwner instanceof TLRPC.TL_messageEmpty)) {
@@ -26082,7 +26105,7 @@ public class ChatActivity extends BaseFragment implements
                                 if (replyDialogId == 0) {
                                     replyDialogId = messageObject.getDialogId();
                                 }
-                                replyMessage = AyuHistoryHook.findDeletedReply(currentAccount, replyDialogId, replyId);
+                                replyMessage = deletedReplyBatch != null ? deletedReplyBatch.find(replyDialogId, replyId) : AyuHistoryHook.findDeletedReply(currentAccount, replyDialogId, replyId);
                             }
                             if (replyMessage != null) {
                                 messageObject.replyMessageObject = replyMessage;
