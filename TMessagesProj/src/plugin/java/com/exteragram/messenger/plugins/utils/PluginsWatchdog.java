@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 public class PluginsWatchdog {
@@ -34,6 +35,8 @@ public class PluginsWatchdog {
     private final ConcurrentHashMap<Long, ExecutionInfo> frozenExecutions = new ConcurrentHashMap<>();
     private volatile ScheduledExecutorService scheduler;
     private final Runnable watchdogRunnable;
+    private final Object tickLock = new Object();
+    private ScheduledFuture<?> tickFuture;
 
     private static final class ExecutionInfo {
         final String pluginId;
@@ -63,6 +66,12 @@ public class PluginsWatchdog {
                 if (notify) {
                     NotificationCenter.getGlobalInstance().postNotificationNameOnUIThread(NotificationCenter.pluginIsNotResponding);
                 }
+                synchronized (tickLock) {
+                    if (executingPlugins.isEmpty() && frozenExecutions.isEmpty() && tickFuture != null) {
+                        tickFuture.cancel(false);
+                        tickFuture = null;
+                    }
+                }
             } catch (Throwable t) {
                 FileLog.e(t);
             }
@@ -74,13 +83,33 @@ public class PluginsWatchdog {
             return;
         }
         scheduler = Executors.newSingleThreadScheduledExecutor();
-        scheduler.scheduleWithFixedDelay(watchdogRunnable, 1L, 1L, TimeUnit.SECONDS);
+        if (!executingPlugins.isEmpty()) {
+            ensureTickScheduled();
+        }
+    }
+
+    private void ensureTickScheduled() {
+        synchronized (tickLock) {
+            ScheduledExecutorService s = scheduler;
+            if (s == null || s.isShutdown()) {
+                return;
+            }
+            if (tickFuture == null || tickFuture.isDone()) {
+                try {
+                    tickFuture = s.scheduleWithFixedDelay(watchdogRunnable, 1L, 1L, TimeUnit.SECONDS);
+                } catch (java.util.concurrent.RejectedExecutionException ignore) {
+                }
+            }
+        }
     }
 
     public void stop() {
-        if (scheduler != null) {
-            scheduler.shutdownNow();
-            scheduler = null;
+        synchronized (tickLock) {
+            if (scheduler != null) {
+                scheduler.shutdownNow();
+                scheduler = null;
+            }
+            tickFuture = null;
         }
         for (ExecutionInfo info : frozenExecutions.values()) {
             Plugin plugin = controller.plugins.get(info.pluginId);
@@ -99,6 +128,7 @@ public class PluginsWatchdog {
         long threadId = Thread.currentThread().getId();
         ExecutionInfo info = new ExecutionInfo(pluginId, System.currentTimeMillis());
         executingPlugins.put(threadId, info);
+        ensureTickScheduled();
         ExecutionInfo frozen = frozenExecutions.remove(threadId);
         if (frozen == null) {
             return;

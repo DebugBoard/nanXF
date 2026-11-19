@@ -114,16 +114,58 @@ public class AndroidUtil {
         BotWebViewVibrationEffect.APP_ERROR.vibrate();
     }
 
+    private static final String KEY_FORCED_PUSH_CONNECTION = "nagramForcedPushConnection";
+    private static final String KEY_PREV_HAD_PUSH_CONNECTION = "nagramPrevHadPushConnection";
+    private static final String KEY_PREV_PUSH_CONNECTION = "nagramPrevPushConnection";
+
     public static void setPushService(boolean fcm) {
         if (fcm) {
             NaConfig.INSTANCE.getPushServiceType().setConfigInt(1);
             NaConfig.INSTANCE.getPushServiceTypeInAppDialog().setConfigBool(false);
+            restoreForcedPushConnection();
         } else {
-            SharedPreferences.Editor editor = MessagesController.getGlobalNotificationsSettings().edit();
-            editor.putBoolean("pushService", true).apply();
-            editor.putBoolean("pushConnection", true).apply();
+            SharedPreferences preferences = MessagesController.getGlobalNotificationsSettings();
+            SharedPreferences.Editor editor = preferences.edit();
+            if (!preferences.getBoolean(KEY_FORCED_PUSH_CONNECTION, false)) {
+                editor.putBoolean(KEY_PREV_HAD_PUSH_CONNECTION, preferences.contains("pushConnection"));
+                editor.putBoolean(KEY_PREV_PUSH_CONNECTION, preferences.getBoolean("pushConnection", false));
+                editor.putBoolean(KEY_FORCED_PUSH_CONNECTION, true);
+            }
+            editor.putBoolean("pushService", true);
+            editor.putBoolean("pushConnection", true);
+            editor.apply();
             NaConfig.INSTANCE.getPushServiceType().setConfigInt(0);
             NaConfig.INSTANCE.getPushServiceTypeInAppDialog().setConfigBool(true);
+        }
+    }
+
+    /** Undo the pushConnection=true that setPushService(false) forced, restoring the user's previous value. */
+    public static void restoreForcedPushConnection() {
+        SharedPreferences preferences = MessagesController.getGlobalNotificationsSettings();
+        if (!preferences.getBoolean(KEY_FORCED_PUSH_CONNECTION, false)) {
+            return;
+        }
+        SharedPreferences.Editor editor = preferences.edit();
+        if (preferences.getBoolean(KEY_PREV_HAD_PUSH_CONNECTION, false)) {
+            editor.putBoolean("pushConnection", preferences.getBoolean(KEY_PREV_PUSH_CONNECTION, false));
+        } else {
+            editor.remove("pushConnection");
+        }
+        editor.remove(KEY_FORCED_PUSH_CONNECTION).remove(KEY_PREV_HAD_PUSH_CONNECTION).remove(KEY_PREV_PUSH_CONNECTION);
+        editor.apply();
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            if (UserConfig.getInstance(a).isClientActivated()) {
+                ConnectionsManager cm = ConnectionsManager.getInstance(a);
+                cm.setPushConnectionEnabled(cm.isPushConnectionEnabled());
+            }
+        }
+    }
+
+    /** The user set the background-connection toggle by hand: never auto-revert it later. */
+    public static void clearForcedPushConnectionMarker() {
+        SharedPreferences preferences = MessagesController.getGlobalNotificationsSettings();
+        if (preferences.getBoolean(KEY_FORCED_PUSH_CONNECTION, false)) {
+            preferences.edit().remove(KEY_FORCED_PUSH_CONNECTION).remove(KEY_PREV_HAD_PUSH_CONNECTION).remove(KEY_PREV_PUSH_CONNECTION).apply();
         }
     }
 

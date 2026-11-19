@@ -613,6 +613,15 @@ public class PluginsController implements PluginsHooks {
         }
 
         NativeCrashHandler.checkAndHandleNativeCrash();
+        if (!ExteraConfig.pluginsSafeMode) {
+            try {
+                if (XposedBridge.isNativeAvailable()) {
+                    XposedBridge.ensureInitialized();
+                }
+            } catch (Throwable t) {
+                FileLog.e(t);
+            }
+        }
         applyArtOpts();
         watchdog.start();
         if (Utilities.pluginsQueue == null || !Utilities.pluginsQueue.isAlive()) {
