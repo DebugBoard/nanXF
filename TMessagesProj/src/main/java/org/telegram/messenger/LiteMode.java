@@ -181,13 +181,42 @@ public class LiteMode {
         }
     }
 
-    public static void registerBatteryReceiver() {
-        try {
-            // ACTION_BATTERY_CHANGED is sticky, the current state is returned right away
-            final Intent intent = ApplicationLoader.applicationContext.registerReceiver(new BatteryReceiver(), new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-            onBatteryChanged(intent);
-        } catch (Throwable e) {
-            FileLog.e(e);
+    private static BatteryReceiver batteryReceiver;
+    private static boolean appResumed;
+
+    // The receiver is only needed while the UI is visible and the level matters (0 < powerSaverLevel < 100);
+    // in background getBatteryLevel() falls back to periodic BatteryManager queries.
+    public static void setAppResumed(boolean resumed) {
+        synchronized (LiteMode.class) {
+            appResumed = resumed;
+        }
+        updateBatteryReceiver();
+    }
+
+    private static void updateBatteryReceiver() {
+        if (!loaded) {
+            loadPreference();
+        }
+        synchronized (LiteMode.class) {
+            final boolean needed = appResumed && powerSaverLevel > 0 && powerSaverLevel < 100;
+            if (needed == (batteryReceiver != null)) {
+                return;
+            }
+            try {
+                if (needed) {
+                    // ACTION_BATTERY_CHANGED is sticky, the current state is returned right away
+                    final BatteryReceiver receiver = new BatteryReceiver();
+                    final Intent intent = ApplicationLoader.applicationContext.registerReceiver(receiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                    batteryReceiver = receiver;
+                    onBatteryChanged(intent);
+                } else {
+                    final BatteryReceiver receiver = batteryReceiver;
+                    batteryReceiver = null;
+                    ApplicationLoader.applicationContext.unregisterReceiver(receiver);
+                }
+            } catch (Throwable e) {
+                FileLog.e(e);
+            }
         }
     }
 
@@ -357,6 +386,7 @@ public class LiteMode {
     public static void setPowerSaverLevel(int value) {
         powerSaverLevel = MathUtils.clamp(value, 0, 100);
         savePreference();
+        updateBatteryReceiver();
 
         // check power saver applied
         getValue(false);

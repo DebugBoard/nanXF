@@ -102,6 +102,10 @@ public class LocationController extends BaseController implements NotificationCe
         public MessageObject messageObject;
     }
 
+    // network/passive fixes are only used as a movement detector (>20 m, see GpsLocationListener)
+    private static final long MOVE_DETECT_MIN_TIME = 5000;
+    private static final float MOVE_DETECT_MIN_DISTANCE = 20f;
+
     private class GpsLocationListener implements LocationListener {
 
         @Override
@@ -311,6 +315,10 @@ public class LocationController extends BaseController implements NotificationCe
             }
             if (!sharingLocations.isEmpty()) {
                 if (permissionsGranted) {
+                    if (!started) {
+                        // stopped while the settings check was in flight
+                        return;
+                    }
                     try {
                         ApplicationLoader.getLocationServiceProvider().getLastLocation(this::setLastKnownLocation);
                         ApplicationLoader.getLocationServiceProvider().requestLocationUpdates(locationRequest, fusedLocationListener);
@@ -490,6 +498,10 @@ public class LocationController extends BaseController implements NotificationCe
                 lastLocationStartTime = newTime;
                 lastLocationSendTime = SystemClock.elapsedRealtime();
                 broadcastLastKnownLocation(cancelAll);
+                if (lastKnownLocation == null && shouldStopGps()) {
+                    // nothing to send yet: stop searching, the branch below restarts it after BACKGROUD_UPDATE_TIME
+                    stop(false);
+                }
             }
         } else if (!sharingLocations.isEmpty()) {
             if (Math.abs(lastLocationSendTime - SystemClock.elapsedRealtime()) > BACKGROUD_UPDATE_TIME) {
@@ -859,12 +871,12 @@ public class LocationController extends BaseController implements NotificationCe
                 FileLog.e(e);
             }
             try {
-                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1, 0, networkLocationListener);
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, MOVE_DETECT_MIN_TIME, MOVE_DETECT_MIN_DISTANCE, networkLocationListener);
             } catch (Exception e) {
                 FileLog.e(e);
             }
             try {
-                locationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, 1, 0, passiveLocationListener);
+                locationManager.requestLocationUpdates(LocationManager.PASSIVE_PROVIDER, MOVE_DETECT_MIN_TIME, MOVE_DETECT_MIN_DISTANCE, passiveLocationListener);
             } catch (Exception e) {
                 FileLog.e(e);
             }
@@ -972,6 +984,9 @@ public class LocationController extends BaseController implements NotificationCe
     public static int getLocationsCount() {
         int count = 0;
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            if (!UserConfig.getInstance(a).isClientActivated()) {
+                continue;
+            }
             count += LocationController.getInstance(a).sharingLocationsUI.size();
         }
         return count;

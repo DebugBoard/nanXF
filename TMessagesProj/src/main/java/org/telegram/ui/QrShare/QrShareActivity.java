@@ -1069,6 +1069,7 @@ public class QrShareActivity extends BaseFragment {
     @Override
     public void onPause() {
         super.onPause();
+        if (view != null) view.setSensorsActive(false);
         // the camera does not stay on in the background
         if (scanOverlay != null) {
             scanOverlay.destroy();
@@ -1104,6 +1105,7 @@ public class QrShareActivity extends BaseFragment {
     @Override
     public void onResume() {
         super.onResume();
+        if (view != null) view.setSensorsActive(true);
         applyWhiteBars();
         if (getParentActivity() != null)
             org.telegram.messenger.AndroidUtilities.setLightNavigationBar(getParentActivity(), false);

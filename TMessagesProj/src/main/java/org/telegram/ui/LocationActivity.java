@@ -1439,6 +1439,13 @@ public class LocationActivity extends BaseFragment implements NotificationCenter
         }
     }
 
+    /** Map content changed on its own (location fix, live marker): refreshes the glass slowly, not per frame. */
+    private void keepMapSnapshotAlive() {
+        if (mapSnapshot != null && mapTexture == null) {
+            mapSnapshot.keepIdleAlive();
+        }
+    }
+
     /** The map's own listener stays behind this one; the map may set it again later, so it is checked with each change of the map. */
     private void listenMapTexture() {
         final TextureView.SurfaceTextureListener listener = mapTexture.getSurfaceTextureListener();
@@ -1988,6 +1995,7 @@ public class LocationActivity extends BaseFragment implements NotificationCenter
 
                     markers.add(liveLocation);
                     markersMap.put(liveLocation.id, liveLocation);
+                    keepMapSnapshotAlive();
                     LocationController.SharingLocationInfo myInfo = getLocationController().getSharingLocationInfo(dialogId);
                     if (liveLocation.id == getUserConfig().getClientUserId() && myInfo != null && liveLocation.object.id == myInfo.mid && myLocation != null) {
                         IMapsProvider.LatLng latLng1 = new IMapsProvider.LatLng(myLocation.getLatitude(), myLocation.getLongitude());
@@ -2000,6 +2008,7 @@ public class LocationActivity extends BaseFragment implements NotificationCenter
         } else {
             liveLocation.object = message;
             liveLocation.marker.setPosition(latLng);
+            keepMapSnapshotAlive();
             if (selectedMarkerId == liveLocation.id) {
                 map.animateCamera(ApplicationLoader.getMapsProvider().newCameraUpdateLatLng(liveLocation.marker.getPosition()));
             }
@@ -2126,6 +2135,7 @@ public class LocationActivity extends BaseFragment implements NotificationCenter
         });
         map.setOnMyLocationChangeListener(location -> {
             positionMarker(location);
+            keepMapSnapshotAlive();
             getLocationController().setMapLocation(location, isFirstLocation);
             isFirstLocation = false;
         });
@@ -2764,6 +2774,7 @@ public class LocationActivity extends BaseFragment implements NotificationCenter
                         liveLocation.object = messageObject.messageOwner;
                         IMapsProvider.LatLng latLng = new IMapsProvider.LatLng(messageObject.messageOwner.media.geo.lat, messageObject.messageOwner.media.geo._long);
                         liveLocation.marker.setPosition(latLng);
+                        keepMapSnapshotAlive();
                         if (selectedMarkerId == liveLocation.id) {
                             map.animateCamera(ApplicationLoader.getMapsProvider().newCameraUpdateLatLng(liveLocation.marker.getPosition()));
                         }
