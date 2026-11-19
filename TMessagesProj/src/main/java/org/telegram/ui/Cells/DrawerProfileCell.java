@@ -66,6 +66,9 @@ public class DrawerProfileCell extends FrameLayout implements NotificationCenter
     private final SimpleTextView nameTextView;
     private final TextView phoneTextView;
     private final ImageView shadowView;
+    private int lastShadowColor;
+    private boolean shadowColorSet;
+    private Drawable lastShadowDrawable;
     protected final ImageView arrowView;
     private final FrameLayout darkThemeBackgroundView;
     private final RLottieImageView darkThemeView;
@@ -476,7 +479,9 @@ public class DrawerProfileCell extends FrameLayout implements NotificationCenter
         }
 
         int nameColor = Theme.getColor(Theme.key_chats_menuName);
-        nameTextView.setTextColor(nameColor);
+        if (nameTextView.getTextColor() != nameColor) {
+            nameTextView.setTextColor(nameColor);
+        }
         phoneTextView.setTextColor(nameColor);
 
         boolean drawCatsShadow = !useWallpaper && Theme.hasThemeKey(Theme.key_chats_menuTopShadowCats);
@@ -486,7 +491,10 @@ public class DrawerProfileCell extends FrameLayout implements NotificationCenter
                     ? Theme.getColor(Theme.key_chats_menuTopShadow)
                     : (Theme.getServiceMessageColor() | 0xff000000));
         Drawable shadowDrawable = shadowView.getDrawable();
-        if (shadowDrawable != null) {
+        if (shadowDrawable != null && (!shadowColorSet || lastShadowColor != shadowColor || lastShadowDrawable != shadowDrawable)) {
+            shadowColorSet = true;
+            lastShadowColor = shadowColor;
+            lastShadowDrawable = shadowDrawable;
             shadowDrawable.setColorFilter(new PorterDuffColorFilter(shadowColor, PorterDuff.Mode.MULTIPLY));
         }
 

@@ -87,7 +87,7 @@ public class VideoPlayerHolderBase {
                     currentPosition = videoPlayer.getCurrentPosition();
                     playerDuration = videoPlayer.getDuration();
                 }
-                if (lastState == ExoPlayer.STATE_READY || lastState == ExoPlayer.STATE_BUFFERING) {
+                if ((lastState == ExoPlayer.STATE_READY || lastState == ExoPlayer.STATE_BUFFERING) && videoPlayer.getPlayWhenReady()) {
                     dispatchQueue.cancelRunnable(progressRunnable);
                     dispatchQueue.postRunnable(progressRunnable, 16);
                 }
@@ -536,6 +536,9 @@ public class VideoPlayerHolderBase {
                 return;
             }
             videoPlayer.seekTo(position);
+            // paused: the 16 ms loop is not running, so refresh the position once
+            dispatchQueue.cancelRunnable(progressRunnable);
+            dispatchQueue.postRunnable(progressRunnable);
         });
     }
 
@@ -546,6 +549,9 @@ public class VideoPlayerHolderBase {
                 return;
             }
             videoPlayer.seekTo(position, fast, done);
+            // paused: the 16 ms loop is not running, so refresh the position once
+            dispatchQueue.cancelRunnable(progressRunnable);
+            dispatchQueue.postRunnable(progressRunnable);
         });
     }
 

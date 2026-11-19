@@ -334,7 +334,8 @@ public class ChatsHelper extends BaseController {
         int unreadCount;
         int mentionCount;
         int reactionCount;
-        boolean counterMuted;
+        boolean counterMuted = false;
+        boolean checkMuted = false;
         if (dialog.id < 0) {
             TLRPC.Chat chat = MessagesController.getInstance(currentAccount).getChat(-dialog.id);
             if (chat != null && (chat.forum || chat.monoforum && ChatObject.canManageMonoForum(currentAccount, chat))) {
@@ -347,7 +348,7 @@ public class ChatsHelper extends BaseController {
                 unreadCount = dialog.unread_count;
                 mentionCount = dialog.unread_mentions_count;
                 reactionCount = dialog.unread_reactions_count;
-                counterMuted = MessagesController.getInstance(currentAccount).isDialogMuted(dialog.id);
+                checkMuted = true;
             }
             if (ChatObject.isMonoForum(chat)) {
                 mentionCount = 0;
@@ -356,7 +357,7 @@ public class ChatsHelper extends BaseController {
             unreadCount = dialog.unread_count;
             mentionCount = dialog.unread_mentions_count;
             reactionCount = dialog.unread_reactions_count;
-            counterMuted = MessagesController.getInstance(currentAccount).isDialogMuted(dialog.id);
+            checkMuted = true;
         }
         if (mentionCount > 0) {
             return true;
@@ -364,7 +365,14 @@ public class ChatsHelper extends BaseController {
         if (reactionCount > 0) {
             return true;
         }
-        return unreadCount > 0 && !counterMuted;
+        if (unreadCount <= 0) {
+            return false;
+        }
+        if (checkMuted) {
+            // evaluated lazily: the prefs lookup is only needed when nothing above decided the result
+            counterMuted = MessagesController.getInstance(currentAccount).isDialogMuted(dialog.id);
+        }
+        return !counterMuted;
     }
 
     @SuppressWarnings("rawtypes")
