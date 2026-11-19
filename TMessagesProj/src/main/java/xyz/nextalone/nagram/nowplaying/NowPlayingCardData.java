@@ -11,6 +11,11 @@ import org.telegram.messenger.ImageLocation;
 import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.Utilities;
 
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import android.text.TextUtils;
+
 public final class NowPlayingCardData {
 
     public interface Callback {
@@ -55,6 +60,13 @@ public final class NowPlayingCardData {
         }
         final ImageLocation finalLocation = imageLocation;
         final ImageReceiver imageReceiver = new ImageReceiver(null);
+        final AtomicBoolean delivered = new AtomicBoolean(false);
+        final Runnable timeout = () -> {
+            if (delivered.compareAndSet(false, true)) {
+                imageReceiver.onDetachedFromWindow();
+                callback.onDataLoaded(new NowPlayingCardData(nowPlayingDTO, null, null, null, null, 0L));
+            }
+        };
         AndroidUtilities.runOnUIThread(() -> {
             imageReceiver.onAttachedToWindow();
             imageReceiver.setDelegate(new ImageReceiver.ImageReceiverDelegate() {
@@ -63,12 +75,19 @@ public final class NowPlayingCardData {
                     if (!set || thumb) {
                         return;
                     }
+                    if (delivered.get()) {
+                        return;
+                    }
                     final Bitmap bitmap = receiver.getBitmap();
                     Utilities.themeQueue.postRunnable(() -> {
                         int[] colors = extractColors(bitmap);
                         final Integer bg = colors[0];
                         final Integer accent = colors[1];
                         AndroidUtilities.runOnUIThread(() -> {
+                            if (!delivered.compareAndSet(false, true)) {
+                                return;
+                            }
+                            AndroidUtilities.cancelRunOnUIThread(timeout);
                             callback.onDataLoaded(new NowPlayingCardData(nowPlayingDTO, bg, accent, bitmap, finalLocation, 0L));
                             imageReceiver.onDetachedFromWindow();
                         });
@@ -82,7 +101,19 @@ public final class NowPlayingCardData {
                 public void onAnimationReady(ImageReceiver receiver) {}
             });
             imageReceiver.setImage(finalLocation, null, null, null, null, 0);
+            AndroidUtilities.runOnUIThread(timeout, 15000);
         });
+    }
+
+    public static boolean sameDisplayedTrack(NowPlayingDTO a, NowPlayingDTO b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+        return TextUtils.equals(a.trackName, b.trackName)
+                && Objects.equals(a.artists, b.artists)
+                && TextUtils.equals(a.albumName, b.albumName)
+                && TextUtils.equals(a.coverUrl, b.coverUrl)
+                && TextUtils.equals(a.previewUrl, b.previewUrl)
+                && TextUtils.equals(a.platform, b.platform);
     }
 
     private static int[] extractColors(Bitmap bitmap) {

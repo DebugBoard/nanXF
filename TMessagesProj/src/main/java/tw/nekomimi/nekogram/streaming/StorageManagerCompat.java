@@ -52,7 +52,7 @@ public final class StorageManagerCompat {
                     byte[] buffer = new byte[4 * 1024];
                     while (true) {
                         int size = callback.onRead(offset, buffer.length, buffer);
-                        if (size == 0) {
+                        if (size <= 0) {
                             break;
                         }
                         offset += size;

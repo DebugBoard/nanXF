@@ -1146,6 +1146,10 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
     private MusicListenReporter reporter;
     private boolean manualRecording;
     private Timer progressTimer = null;
+    private long progressTimerPeriod;
+    private MessageObject progressTimerMessageObject;
+    private static final long PROGRESS_TIMER_PERIOD_VISIBLE = 17;
+    private static final long PROGRESS_TIMER_PERIOD_HIDDEN = 1000;
     private final Object progressTimerSync = new Object();
     private boolean downloadingCurrentMessage;
     private boolean playMusicAgain;
@@ -1358,6 +1362,21 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         }
     }
 
+    private static volatile boolean galleryRequested;
+    private static volatile boolean galleryReloadDeferred;
+
+    private static void reloadGalleryFromObserver() {
+        if (!galleryRequested) {
+            // nothing has asked for the gallery in this process; on-demand loaders read fresh data when opened
+            return;
+        }
+        if (ApplicationLoader.mainInterfacePaused && ApplicationLoader.externalInterfacePaused) {
+            galleryReloadDeferred = true;
+            return;
+        }
+        loadGalleryPhotosAlbums(0, true);
+    }
+
     private static class GalleryObserverInternal extends ContentObserver {
         public GalleryObserverInternal() {
             super(null);
@@ -1370,7 +1389,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                     return;
                 }
                 refreshGalleryRunnable = null;
-                loadGalleryPhotosAlbums(0);
+                reloadGalleryFromObserver();
             }, 2000);
         }
 
@@ -1397,12 +1416,21 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
             }
             AndroidUtilities.runOnUIThread(refreshGalleryRunnable = () -> {
                 refreshGalleryRunnable = null;
-                loadGalleryPhotosAlbums(0);
+                reloadGalleryFromObserver();
             }, 2000);
         }
     }
 
     public static void checkGallery() {
+        if (galleryReloadDeferred && galleryRequested) {
+            galleryReloadDeferred = false;
+            if (refreshGalleryRunnable != null) {
+                AndroidUtilities.cancelRunOnUIThread(refreshGalleryRunnable);
+                refreshGalleryRunnable = null;
+            }
+            loadGalleryPhotosAlbums(0);
+            return;
+        }
         if (Build.VERSION.SDK_INT < 24 || allPhotosAlbumEntry == null) {
             return;
         }
@@ -1727,6 +1755,38 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         return videoPlayer;
     }
 
+    private static long getDesiredProgressTimerPeriod() {
+        return ApplicationLoader.mainInterfacePaused && ApplicationLoader.externalInterfacePaused ? PROGRESS_TIMER_PERIOD_HIDDEN : PROGRESS_TIMER_PERIOD_VISIBLE;
+    }
+
+    public void onInterfaceResumed() {
+        MessageObject messageObject;
+        synchronized (progressTimerSync) {
+            if (progressTimer == null || progressTimerPeriod == PROGRESS_TIMER_PERIOD_VISIBLE) {
+                return;
+            }
+            messageObject = progressTimerMessageObject;
+        }
+        if (messageObject != null) {
+            startProgressTimer(messageObject);
+        }
+    }
+
+    private void refreshAudioProgressFromPlayer() {
+        if (audioPlayer == null || playingMessageObject == null || seekToProgressPending != 0) {
+            return;
+        }
+        try {
+            long duration = audioPlayer.getDuration();
+            long position = audioPlayer.getCurrentPosition();
+            if (duration > 0 && duration != C.TIME_UNSET && position >= 0) {
+                playingMessageObject.audioProgress = Math.min(1f, position / (float) duration);
+            }
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
+    }
+
     private void startProgressTimer(final MessageObject currentPlayingMessageObject) {
         synchronized (progressTimerSync) {
             if (progressTimer != null) {
@@ -1738,10 +1798,25 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                 }
             }
             final String fileName = currentPlayingMessageObject.getFileName();
-            progressTimer = new Timer();
-            progressTimer.schedule(new TimerTask() {
+            final long period = getDesiredProgressTimerPeriod();
+            progressTimerPeriod = period;
+            progressTimerMessageObject = currentPlayingMessageObject;
+            final Timer timer = new Timer();
+            progressTimer = timer;
+            timer.schedule(new TimerTask() {
                 @Override
                 public void run() {
+                    if (getDesiredProgressTimerPeriod() != period) {
+                        AndroidUtilities.runOnUIThread(() -> {
+                            synchronized (progressTimerSync) {
+                                if (progressTimer != timer) {
+                                    return;
+                                }
+                            }
+                            startProgressTimer(currentPlayingMessageObject);
+                        });
+                        return;
+                    }
                     synchronized (sync) {
                         AndroidUtilities.runOnUIThread(() -> {
                             if ((audioPlayer != null || videoPlayer != null) && !isPaused) {
@@ -1791,12 +1866,13 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                         });
                     }
                 }
-            }, 0, 17);
+            }, 0, period);
         }
     }
 
     private void stopProgressTimer() {
         synchronized (progressTimerSync) {
+            progressTimerMessageObject = null;
             if (progressTimer != null) {
                 try {
                     progressTimer.cancel();
@@ -2489,6 +2565,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         } else {
             boolean post = audioPlayer != null;
             final MessageObject currentMessageObject = playingMessageObject;
+            refreshAudioProgressFromPlayer();
             float progress = playingMessageObject.audioProgress;
             int duration = playingMessageObject.audioPlayerDuration;
             if (paused || audioPlayer == null || !audioPlayer.isPlaying() || duration * progress > 1f) {
@@ -2525,10 +2602,19 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         if (chatActivity == null || accelerometerSensor == null && (gravitySensor == null || linearAcceleration == null) || proximitySensor == null) {
             return;
         }
-        if (!SharedConfig.enabledRaiseTo(false) && (playingMessageObject == null || !playingMessageObject.isVoice() && !playingMessageObject.isRoundVideo())) {
+        final boolean voicePlaying = playingMessageObject != null && (playingMessageObject.isVoice() || playingMessageObject.isRoundVideo());
+        if (!SharedConfig.enabledRaiseTo(false) && !voicePlaying) {
             return;
         }
         raiseChat = chatActivity;
+        if (NekoConfig.disableProximityEvents.Bool()) {
+            // proximity can never be reported as touched, so sensor events cannot trigger anything
+            return;
+        }
+        if (!SharedConfig.enabledRaiseTo(true) && !voicePlaying) {
+            // raise-to-listen only: sensors start from playMessage()/resumeAudio() when a voice or round message plays
+            return;
+        }
         if (!sensorsStarted) {
             gravity[0] = gravity[1] = gravity[2] = 0;
             linearAcceleration[0] = linearAcceleration[1] = linearAcceleration[2] = 0;
@@ -2566,6 +2652,9 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
             } else {
                 stopRecording(fromChat ? 2 : 0, false, 0, false, 0);
             }
+        }
+        if (!sensorsStarted && raiseChat == chatActivity) {
+            raiseChat = null;
         }
         if (!sensorsStarted || ignoreOnPause || accelerometerSensor == null && (gravitySensor == null || linearAcceleration == null) || proximitySensor == null || raiseChat != chatActivity) {
             return;
@@ -3447,6 +3536,7 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
         if (music) {
             if (currentMusicPlaybackSpeed >= 6 && speed == 1f && playingMessageObject != null) {
                 audioPlayer.pause();
+                refreshAudioProgressFromPlayer();
                 float p = playingMessageObject.audioProgress;
                 final MessageObject currentMessage = playingMessageObject;
                 AndroidUtilities.runOnUIThread(() -> {
@@ -4051,7 +4141,19 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
                         if (tag != playerNum) {
                             return;
                         }
-                        if (playbackState == ExoPlayer.STATE_ENDED || (playbackState == ExoPlayer.STATE_IDLE || playbackState == ExoPlayer.STATE_BUFFERING) && playWhenReady && messageObject.audioProgress >= 0.999f) {
+                        float endCheckProgress = messageObject.audioProgress;
+                        if (audioPlayer != null && (playbackState == ExoPlayer.STATE_IDLE || playbackState == ExoPlayer.STATE_BUFFERING) && playWhenReady) {
+                            try {
+                                long d = audioPlayer.getDuration();
+                                long p = audioPlayer.getCurrentPosition();
+                                if (d > 0 && d != C.TIME_UNSET && p >= 0) {
+                                    endCheckProgress = Math.max(endCheckProgress, p / (float) d);
+                                }
+                            } catch (Exception e) {
+                                FileLog.e(e);
+                            }
+                        }
+                        if (playbackState == ExoPlayer.STATE_ENDED || (playbackState == ExoPlayer.STATE_IDLE || playbackState == ExoPlayer.STATE_BUFFERING) && playWhenReady && endCheckProgress >= 0.999f) {
                             messageObject.audioProgress = 1f;
                             NotificationCenter.getInstance(messageObject.currentAccount).postNotificationName(NotificationCenter.messagePlayingProgressDidChanged, messageObject.getId(), 0);
                             final boolean restored = restoreMusicPlaylistState();
@@ -6788,6 +6890,14 @@ public class MediaController implements AudioManager.OnAudioFocusChangeListener,
     }
 
     public static void loadGalleryPhotosAlbums(final int guid) {
+        loadGalleryPhotosAlbums(guid, false);
+    }
+
+    private static void loadGalleryPhotosAlbums(final int guid, boolean fromObserver) {
+        if (!fromObserver) {
+            galleryRequested = true;
+        }
+        galleryReloadDeferred = false;
         Thread thread = new Thread(() -> {
             final ArrayList<AlbumEntry> mediaAlbumsSorted = new ArrayList<>();
             final ArrayList<AlbumEntry> photoAlbumsSorted = new ArrayList<>();
