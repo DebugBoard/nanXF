@@ -2832,7 +2832,11 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
     public boolean onFragmentCreate() {
         super.onFragmentCreate();
 
-        Utilities.globalQueue.postRunnable(() -> getMessagesController().getBlockedPeers(false));
+        // Only page in blocked peers until the end is reached; later changes arrive via updatePeerBlocked
+        // and the privacy screens reload with reset=true. getBlockedPeers touches UI-thread state.
+        if (!getMessagesController().blockedEndReached) {
+            AndroidUtilities.runOnUIThread(() -> getMessagesController().getBlockedPeers(false));
+        }
 
         if (arguments != null) {
             onlySelect = arguments.getBoolean("onlySelect", false);

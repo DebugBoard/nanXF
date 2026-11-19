@@ -931,13 +931,18 @@ public class EmojiHelper extends BaseRemoteHelper implements NotificationCenter.
     }
 
     public void checkEmojiPacks() {
+        if ("default".equals(getSelectedEmojiPackId())) {
+            // the callback below returns immediately for the default set; skip the 2-3 metadata requests.
+            // The emoji settings screens call loadEmojisInfo() themselves when opened.
+            return;
+        }
         loadEmojisInfo((error) -> {
             if (getSelectedEmojiPackId().equals("default")) return;
             if (emojiPacksInfo.isEmpty()) {
                 if (!isInstalledOffline(emojiPack)) {
                     emojiPack = "default";
                 }
-                reloadEmoji();
+                reloadEmojiIfChanged();
                 return;
             }
             for (EmojiPackBase emojiPackBase : emojiPacksInfo) {
@@ -947,13 +952,20 @@ public class EmojiHelper extends BaseRemoteHelper implements NotificationCenter.
                         if (!isPackInstalled(emojiPackInfo)) {
                             downloadPack(emojiPackInfo, update, false);
                         } else {
-                            reloadEmoji();
+                            reloadEmojiIfChanged();
                         }
                         break;
                     }
                 }
             }
         });
+    }
+
+    private static void reloadEmojiIfChanged() {
+        if (Emoji.reloadEmojiIfChanged()) {
+            AndroidUtilities.cancelRunOnUIThread(invalidateUiRunnable);
+            AndroidUtilities.runOnUIThread(invalidateUiRunnable);
+        }
     }
 
     public static void reloadEmoji() {
