@@ -172,10 +172,13 @@
     native <methods>;
 }
 
--assumenosideeffects class kotlin.jvm.internal.Intrinsics {
-    public static void check*(...);
-    public static void throw*(...);
-}
+# Kotlin null-check stripping is deliberately NOT enabled. With optimization on, this rule would
+# make `!!`, lateinit and Java-interop null checks stop throwing, which changes what fork code inside
+# runCatching { } blocks (translators, proxy import) returns. Behavior must stay identical.
+#-assumenosideeffects class kotlin.jvm.internal.Intrinsics {
+#    public static void check*(...);
+#    public static void throw*(...);
+#}
 
 -assumenosideeffects class android.util.Log {
     public static *** v(...);
@@ -255,7 +258,8 @@
 -keepattributes Signature,InnerClasses,EnclosingMethod
 -keepattributes SourceFile,LineNumberTable
 -keepattributes *Annotation*
--dontoptimize
+# R8 optimization is enabled for the normal flavor (it is disabled again for the plugin flavor in
+# proguard-plugin-rules.pro, because plugins hook arbitrary methods by name at runtime).
 -dontobfuscate
 -dontwarn org.checkerframework.**
 -dontwarn javax.annotation.**
@@ -264,3 +268,49 @@
 -keep class ru.noties.jlatexmath.** { *; }
 -dontwarn org.scilab.forge.jlatexmath.**
 -keep class org.telegram.tgnet.** { *; }
+
+# ---------------------------------------------------------------------------------------------
+# Keep rules required now that R8 optimization is on (normal flavor). Under optimization R8 may
+# inline, merge, devirtualize, drop write-only fields and assume field values. Everything below is
+# reached by reflection, Gson, dynamic proxies or native code, which R8 cannot see.
+# ---------------------------------------------------------------------------------------------
+
+# Safety net for fork code: Gson/reflection may write fields and instantiate classes that R8 sees
+# no writes or constructor calls for (e.g. AndroidUtilities.scrollToFragmentRow reads settings
+# fragments' "listView" and row fields by name). Keep fields and constructors as they are;
+# methods are still optimized.
+-keepclassmembers class tw.nekomimi.**, xyz.nextalone.**, com.radolyn.**, com.exteragram.**, ws.vinta.**, me.vkryl.**, org.telegram.utils.** {
+    <fields>;
+    <init>(...);
+}
+
+# Gson models in fork code (explicit, in addition to the safety net above).
+-keep class tw.nekomimi.nekogram.helpers.TranscribeHelper$* { *; }
+-keep class tw.nekomimi.nekogram.helpers.TranscribeHelper$*$* { *; }
+-keep class tw.nekomimi.nekogram.filters.AyuFilter$* { *; }
+-keep class com.radolyn.ayugram.database.FilterPrefsMigrator$* { *; }
+-keep class com.exteragram.messenger.ai.data.** { *; }
+-keep class com.exteragram.messenger.pillstack.ui.pills.crypto.utils.ExchangeRates$* { *; }
+-keep class xyz.nextalone.nagram.helper.LocalEmojiStatusData { *; }
+-keep class xyz.nextalone.nagram.helper.LocalQuoteColorData { *; }
+
+# AyuGram DAOs are wrapped in java.lang.reflect.Proxy (LockedDao) and invoked via Method.invoke.
+# R8 must not devirtualize interface calls to the single Room *_Impl class, or change DAO signatures.
+-keep interface com.radolyn.ayugram.database.dao.** { *; }
+-keep class com.radolyn.ayugram.database.dao.**_Impl { *; }
+-keep class com.radolyn.ayugram.database.LockedDao** { *; }
+
+# Classes whose Java methods/fields are looked up by name from native code (GetMethodID/FindClass).
+# Most live in packages already kept above; these are the ones outside them.
+-keep class org.telegram.utils.twidget.** { *; }
+-keep class org.telegram.utils.recorder.audio.AudioRecorderNative { *; }
+-keep class org.telegram.utils.recorder.audio.AudioNoiseSuppressor { *; }
+-keep class org.telegram.utils.code.highlight.PrismaHighlighter { *; }
+-keep class org.jni_zero.** { *; }
+-keep class org.webrtc.** { *; }
+-keep class androidx.media3.decoder.VideoDecoderOutputBuffer { *; }
+-keep class androidx.media3.decoder.ffmpeg.FfmpegAudioDecoder { *; }
+-keep class androidx.media3.decoder.ffmpeg.FfmpegLibrary { *; }
+
+# Translator library: Gson models (already @SerializedName) plus keep the small library whole.
+-keep class app.nekogram.translator.** { *; }
