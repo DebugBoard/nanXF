@@ -2026,6 +2026,9 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
     }
 
+    private static final Paint onlineStatusPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final Path onlineStatusClipPath = new Path();
+
     public void drawStatusWithImage(Canvas canvas, ImageReceiver imageReceiver, int radius) {
         int onlineColor = AndroidUtil.getOnlineColor(currentUser, resourcesProvider);
         if (onlineColor == 0) {
@@ -2038,16 +2041,15 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
         int spaceLeft = radius - circleRadius;
         int xCenterRegion = x - spaceLeft;
         int yCenterRegion = y - spaceLeft;
-        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        paint.setColor(onlineColor);
+        onlineStatusPaint.setColor(onlineColor);
         canvas.save();
-        Path p = new Path();
-        p.addCircle(x - radius, y - radius, radius, Path.Direction.CW);
-        p.toggleInverseFillType();
-        canvas.clipPath(p);
+        onlineStatusClipPath.rewind();
+        onlineStatusClipPath.addCircle(x - radius, y - radius, radius, Path.Direction.CW);
+        onlineStatusClipPath.setFillType(Path.FillType.INVERSE_WINDING);
+        canvas.clipPath(onlineStatusClipPath);
         imageReceiver.draw(canvas);
         canvas.restore();
-        canvas.drawCircle(xCenterRegion - circleRadius, yCenterRegion - circleRadius, circleRadius, paint);
+        canvas.drawCircle(xCenterRegion - circleRadius, yCenterRegion - circleRadius, circleRadius, onlineStatusPaint);
     }
 
     public void setResourcesProvider(Theme.ResourcesProvider resourcesProvider) {
@@ -6006,7 +6008,7 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
             channelRecommendationsCell.onDetachedFromWindow();
         }
 
-        Choreographer60FpsContent.getInstance().removeFrameCallback(invalidateOutboundsRunnable);
+        Choreographer60FpsContent.getInstance().removeFrameCallbackOnce(invalidateOutboundsRunnable);
     }
 
     private NotificationCenter.ObserversGroup observersGroup;
@@ -19223,9 +19225,9 @@ public class ChatMessageCell extends BaseCell implements SeekBar.SeekBarDelegate
         }
 
         if (reactionsLayoutInBubble.hasOverlay() && drawReactionsLayoutOverlay(canvas, 1f)) {
-            Choreographer60FpsContent.getInstance().addFrameCallback(invalidateOutboundsRunnable, 15);
+            Choreographer60FpsContent.getInstance().addFrameCallbackOnce(invalidateOutboundsRunnable, 15);
         } else {
-            Choreographer60FpsContent.getInstance().removeFrameCallback(invalidateOutboundsRunnable);
+            Choreographer60FpsContent.getInstance().removeFrameCallbackOnce(invalidateOutboundsRunnable);
         }
 
         if ((currentNameStatusDrawable != null || currentNameEmojiStatusDrawable != null || topicButton != null && (drawTopic || transitionParams.animateDrawTopic)) && drawNameLayout && nameLayout != null && (currentPosition == null || currentPosition.minX == 0 && currentPosition.minY == 0) && !(currentMessageObject.deleted && !drawingToBitmap && currentMessagesGroup != null && currentMessagesGroup.messages.size() >= 1)) {

@@ -86,6 +86,9 @@ public class SimpleTextView extends View implements Drawable.Callback {
     private float scrollingOffset;
     private long lastUpdateTime;
     private int currentScrollDelay;
+    /** uptimeMillis at which the current marquee pause ends; 0 = not computed yet. */
+    private long scrollDelayEndTime;
+    private final Runnable scrollDelayInvalidate = this::invalidate;
     private Paint fadePaint;
     private Paint fadePaintBack;
     private Paint fadeEllpsizePaint;
@@ -514,6 +517,7 @@ public class SimpleTextView extends View implements Drawable.Callback {
             lastWidth = AndroidUtilities.displaySize.x;
             scrollingOffset = 0;
             currentScrollDelay = SCROLL_DELAY_MS;
+            scrollDelayEndTime = 0;
             checkUi_layerType();
         }
         createLayout(width - getPaddingLeft() - getPaddingRight() - minusWidth - (leftDrawableOutside && leftDrawable != null ? leftDrawable.getIntrinsicWidth() + drawablePadding : 0) - (rightDrawableOutside && rightDrawable != null ? rightDrawable.getIntrinsicWidth() + drawablePadding : 0) - (rightDrawableOutside && rightDrawable2 != null ? rightDrawable2.getIntrinsicWidth() + drawablePadding : 0));
@@ -707,6 +711,7 @@ public class SimpleTextView extends View implements Drawable.Callback {
         }
         text = value;
         currentScrollDelay = SCROLL_DELAY_MS;
+        scrollDelayEndTime = 0;
         recreateLayoutMaybe();
         return true;
     }
@@ -1241,7 +1246,20 @@ public class SimpleTextView extends View implements Drawable.Callback {
             dt = 17;
         }
         if (currentScrollDelay > 0) {
-            currentScrollDelay -= dt;
+            // The pause used to count down ~17 ms per drawn frame while redrawing every frame.
+            // Keep the same length (in frames at the current refresh rate) but wait instead of redrawing.
+            final long now = SystemClock.uptimeMillis();
+            if (scrollDelayEndTime == 0) {
+                final int frames = (int) Math.ceil(currentScrollDelay / 17f);
+                scrollDelayEndTime = now + (long) Math.ceil(frames * AndroidUtilities.screenRefreshTime);
+            }
+            if (now < scrollDelayEndTime) {
+                removeCallbacks(scrollDelayInvalidate);
+                postDelayed(scrollDelayInvalidate, scrollDelayEndTime - now);
+                return;
+            }
+            currentScrollDelay = 0;
+            scrollDelayEndTime = 0;
         } else {
             int totalDistance = totalWidth + dp(DIST_BETWEEN_SCROLLING_TEXT);
             float pixelsPerSecond;
@@ -1258,6 +1276,7 @@ public class SimpleTextView extends View implements Drawable.Callback {
             if (scrollingOffset > totalDistance) {
                 scrollingOffset = 0;
                 currentScrollDelay = SCROLL_DELAY_MS;
+                scrollDelayEndTime = 0;
             }
             checkUi_layerType();
         }
