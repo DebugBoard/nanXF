@@ -27,6 +27,7 @@ public abstract class BasePill extends FrameLayout {
     protected LoadingDrawable loadingDrawable;
     protected View loadingTargetView;
     private final RectF rectF = new RectF();
+    private boolean refreshActive;
     protected Theme.ResourcesProvider resourcesProvider;
 
     private final Runnable autoRefreshRunnable = () -> {
@@ -63,7 +64,7 @@ public abstract class BasePill extends FrameLayout {
     private void scheduleNextUpdate() {
         removeCallbacks(autoRefreshRunnable);
         long interval = getRefreshInterval();
-        if (interval > 0) {
+        if (interval > 0 && refreshActive) {
             postDelayed(autoRefreshRunnable, interval);
         }
     }
@@ -77,16 +78,43 @@ public abstract class BasePill extends FrameLayout {
         return last == 0L || SystemClock.elapsedRealtime() - last >= interval;
     }
 
-    @Override
-    protected void onAttachedToWindow() {
-        super.onAttachedToWindow();
+    /**
+     * Called when the pill becomes visible to the user while its window is visible
+     * (attached, not GONE, activity started). Return true if the pill has already
+     * refreshed its data itself, so the generic "refresh if due" catch-up is skipped.
+     */
+    protected boolean onRefreshActive() {
+        return false;
+    }
+
+    /** Called when the pill stops being visible (hidden, detached or app in background). */
+    protected void onRefreshInactive() {
+    }
+
+    private void updateRefreshState(boolean detaching) {
+        boolean active = !detaching && isAttachedToWindow() && getWindowVisibility() == VISIBLE && isShown();
+        if (active == refreshActive) {
+            return;
+        }
+        refreshActive = active;
+        if (!active) {
+            removeCallbacks(autoRefreshRunnable);
+            onRefreshInactive();
+            return;
+        }
+        boolean handled = onRefreshActive();
         long interval = getRefreshInterval();
         if (interval > 0) {
+            if (handled) {
+                scheduleNextUpdate();
+                return;
+            }
             long now = SystemClock.elapsedRealtime();
             Long last = globalLastUpdateTimes.get(getPillId(), 0L);
             if (last != 0L) {
                 long diff = now - last;
                 if (diff < interval) {
+                    removeCallbacks(autoRefreshRunnable);
                     postDelayed(autoRefreshRunnable, interval - diff);
                     return;
                 }
@@ -96,9 +124,28 @@ public abstract class BasePill extends FrameLayout {
     }
 
     @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        updateRefreshState(false);
+    }
+
+    @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+        updateRefreshState(true);
         removeCallbacks(autoRefreshRunnable);
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        updateRefreshState(false);
+    }
+
+    @Override
+    public void onVisibilityAggregated(boolean isVisible) {
+        super.onVisibilityAggregated(isVisible);
+        updateRefreshState(false);
     }
 
     protected void markDataUpdated() {
@@ -158,7 +205,7 @@ public abstract class BasePill extends FrameLayout {
     protected void dispatchDraw(Canvas canvas) {
         super.dispatchDraw(canvas);
         if (loadingDrawable != null) {
-            if (loadingDrawable.getAlpha() > 0 || !loadingDrawable.isDisappearing()) {
+            if (!loadingDrawable.isDisappeared()) {
                 View view = loadingTargetView != null ? loadingTargetView : this;
                 rectF.set(view.getLeft(), view.getTop(), view.getRight(), view.getBottom());
                 loadingDrawable.setBounds(rectF);

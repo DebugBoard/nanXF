@@ -46,7 +46,23 @@ public class WebMetadataCache {
         public String sitename;
         public int actionBarColor;
         public int backgroundColor;
-        public Bitmap favicon;
+        private Bitmap favicon;
+        private boolean faviconDecoded = true;
+
+        public synchronized Bitmap getFavicon() {
+            if (!faviconDecoded) {
+                faviconDecoded = true;
+                if (faviconBytes != null) {
+                    favicon = BitmapFactory.decodeStream(new ByteArrayInputStream(faviconBytes));
+                }
+            }
+            return favicon;
+        }
+
+        public synchronized void setFavicon(Bitmap bitmap) {
+            favicon = bitmap;
+            faviconDecoded = true;
+        }
 
         public byte[] faviconBytes;
 
@@ -65,7 +81,7 @@ public class WebMetadataCache {
                 metadata.backgroundColor = webView.lastBackgroundColor;
             }
             if (webView.lastFaviconGot) {
-                metadata.favicon = webView.lastFavicon;
+                metadata.setFavicon(webView.lastFavicon);
             }
             return metadata;
         }
@@ -78,7 +94,16 @@ public class WebMetadataCache {
             stream.writeString(sitename == null ? "" : sitename);
             stream.writeInt32(actionBarColor);
             stream.writeInt32(backgroundColor);
-            if (favicon == null) {
+            final Bitmap favicon;
+            final boolean pendingDecode;
+            synchronized (this) {
+                favicon = this.favicon;
+                pendingDecode = !faviconDecoded;
+            }
+            if (pendingDecode && faviconBytes != null) {
+                stream.writeInt32(0x38da9893);
+                stream.writeByteArray(faviconBytes);
+            } else if (favicon == null) {
                 stream.writeInt32(TLRPC.TL_null.constructor);
             } else {
                 stream.writeInt32(0x38da9893);
@@ -112,9 +137,11 @@ public class WebMetadataCache {
             int magic = stream.readInt32(exception);
             if (magic == TLRPC.TL_null.constructor) {
                 favicon = null;
+                faviconDecoded = true;
             } else {
                 faviconBytes = stream.readByteArray(exception);
-                favicon = BitmapFactory.decodeStream(new ByteArrayInputStream(faviconBytes));
+                favicon = null;
+                faviconDecoded = false; // decoded lazily by getFavicon()
             }
         }
     }

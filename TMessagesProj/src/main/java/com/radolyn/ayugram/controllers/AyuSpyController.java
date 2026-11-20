@@ -11,6 +11,7 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.ConnectionsManager;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import xyz.nextalone.nagram.NaConfig;
@@ -42,24 +43,36 @@ public final class AyuSpyController {
         AyuQueues.spyQueue.postRunnable(() -> recordContentsReads(selfUserId, dialogId, messageIds, readTime));
     }
 
+    private static final int SPY_BATCH_SIZE = 200;
+
     private static void recordReads(long selfUserId, long dialogId, List<Integer> messageIds, int readTime) {
         SpyDao dao = AyuData.getSpyDao();
         if (dao == null) {
             return;
         }
-        for (int i = 0; i < messageIds.size(); i++) {
-            int mid = messageIds.get(i);
+        for (int from = 0; from < messageIds.size(); from += SPY_BATCH_SIZE) {
+            List<Integer> chunk = new ArrayList<>(messageIds.subList(from, Math.min(messageIds.size(), from + SPY_BATCH_SIZE)));
             try {
-                if (dao.getMessageRead(selfUserId, dialogId, mid) == null) {
-                    SpyMessageRead entry = new SpyMessageRead();
-                    entry.userId = selfUserId;
-                    entry.dialogId = dialogId;
-                    entry.messageId = mid;
-                    entry.entityCreateDate = readTime;
-                    dao.insert(entry);
-                }
+                dao.insertReadsIfAbsent(selfUserId, dialogId, chunk, readTime);
+                continue;
             } catch (Exception e) {
-                FileLog.e("AyuSpy: recordReads", e);
+                FileLog.e("AyuSpy: recordReads batch", e);
+            }
+            // 批量事务失败（已回滚）：回退到逐条路径，保持单行错误隔离
+            for (int i = 0; i < chunk.size(); i++) {
+                int mid = chunk.get(i);
+                try {
+                    if (dao.getMessageRead(selfUserId, dialogId, mid) == null) {
+                        SpyMessageRead entry = new SpyMessageRead();
+                        entry.userId = selfUserId;
+                        entry.dialogId = dialogId;
+                        entry.messageId = mid;
+                        entry.entityCreateDate = readTime;
+                        dao.insert(entry);
+                    }
+                } catch (Exception e) {
+                    FileLog.e("AyuSpy: recordReads", e);
+                }
             }
         }
     }
@@ -69,19 +82,28 @@ public final class AyuSpyController {
         if (dao == null) {
             return;
         }
-        for (int i = 0; i < messageIds.size(); i++) {
-            int mid = messageIds.get(i);
+        for (int from = 0; from < messageIds.size(); from += SPY_BATCH_SIZE) {
+            List<Integer> chunk = new ArrayList<>(messageIds.subList(from, Math.min(messageIds.size(), from + SPY_BATCH_SIZE)));
             try {
-                if (dao.getMessageContentsRead(selfUserId, dialogId, mid) == null) {
-                    SpyMessageContentsRead entry = new SpyMessageContentsRead();
-                    entry.userId = selfUserId;
-                    entry.dialogId = dialogId;
-                    entry.messageId = mid;
-                    entry.entityCreateDate = readTime;
-                    dao.insert(entry);
-                }
+                dao.insertContentsReadsIfAbsent(selfUserId, dialogId, chunk, readTime);
+                continue;
             } catch (Exception e) {
-                FileLog.e("AyuSpy: recordContentsReads", e);
+                FileLog.e("AyuSpy: recordContentsReads batch", e);
+            }
+            for (int i = 0; i < chunk.size(); i++) {
+                int mid = chunk.get(i);
+                try {
+                    if (dao.getMessageContentsRead(selfUserId, dialogId, mid) == null) {
+                        SpyMessageContentsRead entry = new SpyMessageContentsRead();
+                        entry.userId = selfUserId;
+                        entry.dialogId = dialogId;
+                        entry.messageId = mid;
+                        entry.entityCreateDate = readTime;
+                        dao.insert(entry);
+                    }
+                } catch (Exception e) {
+                    FileLog.e("AyuSpy: recordContentsReads", e);
+                }
             }
         }
     }

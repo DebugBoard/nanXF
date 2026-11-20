@@ -15,6 +15,7 @@ import com.exteragram.messenger.pillstack.ui.pills.BasePill;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.NotificationCenter;
+import org.telegram.messenger.ProxyPingController;
 import org.telegram.messenger.R;
 import org.telegram.messenger.SharedConfig;
 import org.telegram.messenger.UserConfig;
@@ -97,7 +98,7 @@ public class ProxyPill extends BasePill implements NotificationCenter.Notificati
             label = LocaleController.getString(R.string.MenuProxyConnecting);
             startLoading();
         }
-        if (animate || !TextUtils.equals(previous, label)) {
+        if (!TextUtils.equals(previous, label)) {
             if (animate) {
                 animateSizeChange();
             }
@@ -113,6 +114,17 @@ public class ProxyPill extends BasePill implements NotificationCenter.Notificati
         NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.proxySettingsChanged);
         NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.proxyPingUpdated);
         NotificationCenter.getInstance(UserConfig.selectedAccount).addObserver(this, NotificationCenter.didUpdateConnectionState);
+    }
+
+    @Override
+    protected boolean onRefreshActive() {
+        ProxyPingController.addWatcher();
+        return false;
+    }
+
+    @Override
+    protected void onRefreshInactive() {
+        ProxyPingController.removeWatcher();
     }
 
     @Override

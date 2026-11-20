@@ -113,6 +113,21 @@ public class Emoji {
         }
     }
 
+    /**
+     * Reloads emoji bitmaps only when the selected pack file actually changed since the last
+     * reloadCache(), so a startup pack check doesn't throw away every rendered emoji.
+     * @return true if a reload happened
+     */
+    public static boolean reloadEmojiIfChanged() {
+        File newFile = EmojiHelper.getInstance().getCurrentEmojiPackOffline();
+        boolean newSelected = !EmojiHelper.getInstance().getEmojiPack().equals("default") && newFile != null && newFile.exists();
+        if (newSelected == isSelectedEmojiPack && Objects.equals(newFile, emojiFile)) {
+            return false;
+        }
+        reloadEmoji();
+        return true;
+    }
+
     static {
         drawImgSize = AndroidUtilities.dp(20);
         bigImgSize = AndroidUtilities.dp(AndroidUtilities.isTablet() ? 40 : 34);

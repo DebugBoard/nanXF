@@ -27,6 +27,7 @@ public class MapGlassSnapshot {
     private static final int SCALE = 4;
     private static final long ACTIVE_MS = 1500;
     private static final long IDLE_INTERVAL_MS = 400;
+    private static final long IDLE_WINDOW_MS = 10_000;
 
     private final Runnable onUpdated;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -38,7 +39,7 @@ public class MapGlassSnapshot {
     private Bitmap shown, spare;
     private boolean running, copying, released;
     private boolean scheduledFrame, scheduledIdle;
-    private long activeUntil;
+    private long activeUntil, idleUntil;
 
     private final Choreographer.FrameCallback frameCallback = frameTimeNanos -> {
         scheduledFrame = false;
@@ -79,11 +80,22 @@ public class MapGlassSnapshot {
 
     /** The map has changed or is about to (a touch, a camera move): copies on every frame for a while. */
     public void poke() {
-        activeUntil = SystemClock.uptimeMillis() + ACTIVE_MS;
+        final long now = SystemClock.uptimeMillis();
+        activeUntil = now + ACTIVE_MS;
+        idleUntil = now + IDLE_WINDOW_MS;
         if (scheduledIdle) {
             handler.removeCallbacks(idleCallback);
             scheduledIdle = false;
         }
+        schedule();
+    }
+
+    /**
+     * Map content changed without a touch or camera move (a location fix, a live marker): keeps the slow
+     * idle copies going for a while, without the per-frame copies of {@link #poke()}.
+     */
+    public void keepIdleAlive() {
+        idleUntil = Math.max(idleUntil, SystemClock.uptimeMillis() + IDLE_WINDOW_MS);
         schedule();
     }
 
@@ -129,7 +141,7 @@ public class MapGlassSnapshot {
         if (SystemClock.uptimeMillis() < activeUntil) {
             scheduledFrame = true;
             Choreographer.getInstance().postFrameCallback(frameCallback);
-        } else {
+        } else if (SystemClock.uptimeMillis() < idleUntil) {
             scheduledIdle = true;
             handler.postDelayed(idleCallback, IDLE_INTERVAL_MS);
         }

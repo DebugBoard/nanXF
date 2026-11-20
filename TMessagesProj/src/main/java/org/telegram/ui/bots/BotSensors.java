@@ -9,9 +9,10 @@ import android.util.Log;
 
 import org.json.JSONObject;
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.ui.web.BotWebViewContainer;
 
-public class BotSensors {
+public class BotSensors implements NotificationCenter.NotificationCenterDelegate {
 
     private final SensorManager sensorManager;
 
@@ -27,6 +28,30 @@ public class BotSensors {
 
     public BotSensors(Context context, long bot_id) {
         sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
+        // LaunchActivity posts these (flag 4096) when the app UI goes to background / returns
+        NotificationCenter.getGlobalInstance().addWeakObserver(this, NotificationCenter.stopAllHeavyOperations);
+        NotificationCenter.getGlobalInstance().addWeakObserver(this, NotificationCenter.startAllHeavyOperations);
+    }
+
+    @Override
+    public void didReceivedNotification(int id, int account, Object... args) {
+        if ((id == NotificationCenter.stopAllHeavyOperations || id == NotificationCenter.startAllHeavyOperations)
+                && args != null && args.length > 0 && args[0] instanceof Integer && ((Integer) args[0] & 4096) != 0) {
+            appPaused = id == NotificationCenter.stopAllHeavyOperations;
+            updatePaused();
+        }
+    }
+
+    // two independent reasons to be paused: the owner (sheet minimized / web view detached) and the app in background
+    private boolean ownerPaused;
+    private boolean appPaused;
+
+    private void updatePaused() {
+        if (ownerPaused || appPaused) {
+            doPause();
+        } else {
+            doResume();
+        }
     }
 
     private BotWebViewContainer.MyWebView webView;
@@ -190,6 +215,16 @@ public class BotSensors {
     private boolean paused;
 
     public void pause() {
+        ownerPaused = true;
+        updatePaused();
+    }
+
+    public void resume() {
+        ownerPaused = false;
+        updatePaused();
+    }
+
+    private void doPause() {
         if (paused) return;
         paused = true;
 
@@ -228,7 +263,7 @@ public class BotSensors {
         }
     }
 
-    public void resume() {
+    private void doResume() {
         if (!paused) return;
         paused = false;
 

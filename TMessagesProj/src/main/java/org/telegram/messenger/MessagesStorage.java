@@ -16332,9 +16332,9 @@ public class MessagesStorage extends BaseController {
         }
         // don't overwrite local media with the burned (empty) version coming from the server
         TLRPC.MessageMedia media = message.media;
-        if (AyuSavePreferences.shouldKeepMediaFor(currentAccount, MessageObject.getDialogId(message), message)
-                && media != null && media.ttl_seconds != 0
-                && (media.photo instanceof TLRPC.TL_photoEmpty || media.document instanceof TLRPC.TL_documentEmpty)) {
+        if (media != null && media.ttl_seconds != 0
+                && (media.photo instanceof TLRPC.TL_photoEmpty || media.document instanceof TLRPC.TL_documentEmpty)
+                && AyuSavePreferences.shouldKeepMediaFor(currentAccount, MessageObject.getDialogId(message), message)) {
             return;
         }
         storageQueue.postRunnable(() -> {
@@ -16813,13 +16813,15 @@ public class MessagesStorage extends BaseController {
                                         message = oldMessage;
                                     } else {
                                         // --- AyuGram hook
-                                        if (message.from_id != null && AyuMessagesController.shouldSaveEdit(oldMessage, message, sameMedia)) {
-                                            if (NaConfig.INSTANCE.getEnableSaveEditsHistory().Bool()) {
+                                        boolean ayuSaveEdits = NaConfig.INSTANCE.getEnableSaveEditsHistory().Bool();
+                                        boolean ayuRegexFilters = NaConfig.INSTANCE.getRegexFiltersEnabled().Bool();
+                                        if ((ayuSaveEdits || ayuRegexFilters) && message.from_id != null && AyuMessagesController.shouldSaveEdit(oldMessage, message, sameMedia)) {
+                                            if (ayuSaveEdits) {
                                                 var prefs = new AyuSavePreferences(oldMessage, currentAccount);
                                                 prefs.setDialogId(dialogId);
                                                 AyuMessagesController.getInstance().onMessageEdited(prefs, message);
                                             }
-                                            if (NaConfig.INSTANCE.getRegexFiltersEnabled().Bool()) {
+                                            if (ayuRegexFilters) {
                                                 AyuFilter.onMessageEdited(message.id, dialogId);
                                             }
                                         }

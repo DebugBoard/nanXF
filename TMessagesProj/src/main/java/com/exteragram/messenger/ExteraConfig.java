@@ -117,7 +117,9 @@ public final class ExteraConfig {
             initialized = true;
         }
         loadConfig();
-        BadgesController.INSTANCE.init();
+        if (PluginsController.isPluginEngineSupported()) {
+            BadgesController.INSTANCE.init();
+        }
         PluginsController.getInstance().init(() -> PluginsController.getInstance().executeOnAppEvent(PluginsConstants.APP_START));
     }
 }

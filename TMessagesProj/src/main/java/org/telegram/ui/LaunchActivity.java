@@ -7701,6 +7701,8 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         WidgetMedia.onAppPaused(true);
         PipCoordinator.getInstance().onActivityPause(this);
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.stopAllHeavyOperations, 4096);
+        Theme.pauseAutoNightSensor();
+        LiteMode.setAppResumed(false);
         ApplicationLoader.mainInterfacePaused = true;
         int account = currentAccount;
         Utilities.stageQueue.postRunnable(() -> {
@@ -8022,9 +8024,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             onResumeStaticCallback.run();
             onResumeStaticCallback = null;
         }
-        if (Theme.selectedAutoNightType == Theme.AUTO_NIGHT_TYPE_SYSTEM) {
+        if (Theme.selectedAutoNightType == Theme.AUTO_NIGHT_TYPE_SYSTEM || Theme.selectedAutoNightType == Theme.AUTO_NIGHT_TYPE_AUTOMATIC) {
             Theme.checkAutoNightThemeConditions();
         }
+        LiteMode.setAppResumed(true);
         // Check Monet color changes
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MonetHelper.refreshMonetThemeIfChanged();
@@ -8035,6 +8038,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         NotificationCenter.getGlobalInstance().postNotificationName(NotificationCenter.startAllHeavyOperations, 4096);
         MediaController.getInstance().setFeedbackView(feedbackView = actionBarLayout.getView(), true);
         ApplicationLoader.mainInterfacePaused = false;
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            com.exteragram.messenger.feed.FeedController feedController = UserConfig.getInstance(a).isClientActivated() ? com.exteragram.messenger.feed.FeedController.peekInstance(a) : null;
+            if (feedController != null) feedController.onAppResumed();
+        }
         MessagesController.getInstance(currentAccount).sortDialogs(null);
         showLanguageAlert(false);
         Utilities.stageQueue.postRunnable(() -> {
@@ -8043,6 +8050,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         });
         checkFreeDiscSpace(0);
         MediaController.checkGallery();
+        MediaController.getInstance().onInterfaceResumed();
         onPasscodeResume();
         if (passcodeDialog == null || passcodeDialog.passcodeView.getVisibility() != View.VISIBLE) {
             actionBarLayout.onResume();

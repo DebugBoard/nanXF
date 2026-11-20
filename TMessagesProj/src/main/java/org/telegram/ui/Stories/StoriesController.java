@@ -604,6 +604,9 @@ public class StoriesController {
     }
 
     public void preloadUserStories(TL_stories.PeerStories userStories) {
+        if (NaConfig.INSTANCE.getDisableStories().Bool()) {
+            return;
+        }
         int preloadPosition = 0;
         for (int i = 0; i < userStories.stories.size(); i++) {
             if (userStories.stories.get(i).id > userStories.max_read_id) {
@@ -625,6 +628,9 @@ public class StoriesController {
     }
 
     private void preloadStory(long dialogId, TL_stories.StoryItem storyItem) {
+        if (NaConfig.INSTANCE.getDisableStories().Bool()) {
+            return; // stories hidden: never preload media that can't be shown
+        }
         if (storyItem.attachPath != null) {
             return;
         }

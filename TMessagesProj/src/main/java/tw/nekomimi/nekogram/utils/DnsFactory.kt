@@ -35,6 +35,15 @@ import kotlin.coroutines.resume
 
 object DnsFactory {
 
+    private fun cancelCalls(callTag: String) {
+        for (call in httpClient.dispatcher.runningCalls()) {
+            if (call.request().tag() == callTag) call.cancel()
+        }
+        for (call in httpClient.dispatcher.queuedCalls()) {
+            if (call.request().tag() == callTag) call.cancel()
+        }
+    }
+
     private const val USE_IPV4_ONLY: Byte = 0
     private const val USE_IPV6_ONLY: Byte = 1
     private const val USE_IPV4_IPV6_RANDOM: Byte = 2
@@ -118,12 +127,7 @@ object DnsFactory {
 
                         continuation.invokeOnCancellation {
                             FileLog.d("['${domain}'] Coroutine cancelled, cleaning up OkHttp calls.")
-                            for (call in httpClient.dispatcher.runningCalls()) {
-                                if (call.request().tag() == callTag) call.cancel()
-                            }
-                            for (call in httpClient.dispatcher.queuedCalls()) {
-                                if (call.request().tag() == callTag) call.cancel()
-                            }
+                            cancelCalls(callTag)
                         }
 
                         for (provider in usedProviders) {
@@ -158,6 +162,8 @@ object DnsFactory {
                                     if (addresses != null && continuation.isActive && counterGood.incrementAndGet() == 1) {
                                         FileLog.d("['${domain}'] First successful response from $provider. Result: ${addresses.map { it.hostAddress }}")
                                         continuation.resume(addresses)
+                                        // First answer wins; stop the remaining in-flight providers.
+                                        cancelCalls(callTag)
                                     } else if (addresses == null) {
                                         FileLog.d("['${domain}'] Provider $provider returned a non-conclusive answer (e.g., CNAME, NXRRSET).")
                                     }
@@ -243,12 +249,7 @@ object DnsFactory {
 
                     continuation.invokeOnCancellation {
                         FileLog.d("['${domain}'] TXT Coroutine cancelled, cleaning up OkHttp calls.")
-                        for (call in httpClient.dispatcher.runningCalls()) {
-                            if (call.request().tag() == callTag) call.cancel()
-                        }
-                        for (call in httpClient.dispatcher.queuedCalls()) {
-                            if (call.request().tag() == callTag) call.cancel()
-                        }
+                        cancelCalls(callTag)
                     }
 
                     for (provider in usedProviders) {
@@ -277,6 +278,8 @@ object DnsFactory {
                                 if (txtRecords != null && continuation.isActive && counterGood.incrementAndGet() == 1) {
                                     FileLog.d("['${domain}'] First successful TXT response from $provider. Result: $txtRecords")
                                     continuation.resume(txtRecords)
+                                    // First answer wins; stop the remaining in-flight providers.
+                                    cancelCalls(callTag)
                                 } else if (txtRecords == null) {
                                     FileLog.d("['${domain}'] Provider $provider returned a non-conclusive answer for TXT.")
                                 }

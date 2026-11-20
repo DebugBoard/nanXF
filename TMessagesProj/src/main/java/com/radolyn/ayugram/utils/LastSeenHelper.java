@@ -202,6 +202,7 @@ public class LastSeenHelper {
         if (!NaConfig.INSTANCE.getSaveLocalLastSeen().Bool()) {
             return 0;
         }
+        preload(); // lazy: preload() is idempotent, so background-only process starts skip the table load
         synchronized (cache) {
             return cache.get(userId, 0);
         }

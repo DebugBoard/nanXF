@@ -40,7 +40,6 @@ import androidx.core.content.FileProvider;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
-import com.radolyn.ayugram.utils.LastSeenHelper;
 
 import org.json.JSONObject;
 import org.telegram.messenger.utils.Choreographer60FpsContent;
@@ -60,7 +59,6 @@ import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 
 import tw.nekomimi.nekogram.NekoConfig;
-import org.maplibre.android.MapLibre;
 import xyz.nextalone.nagram.NaConfig;
 import com.google.firebase.crashlytics.FirebaseCrashlytics;
 import com.exteragram.messenger.ExteraConfig;
@@ -74,7 +72,6 @@ public class ApplicationLoader extends Application {
 
     public static ApplicationLoader applicationLoaderInstance;
 
-    private static PendingIntent pendingIntent;
 
     @SuppressLint("StaticFieldLeak")
     public static volatile Context applicationContext;
@@ -268,6 +265,11 @@ public class ApplicationLoader extends Application {
 
                     boolean isSlow = isConnectionSlow();
                     for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                        // Don't spin up network stacks for unused account slots; a lazily created
+                        // ConnectionsManager runs checkConnection() itself at the end of init().
+                        if (!ConnectionsManager.isInstanceCreated(a)) {
+                            continue;
+                        }
                         ConnectionsManager.getInstance(a).checkConnection();
                         FileLoader.getInstance(a).onNetworkChanged(isSlow);
                     }
@@ -288,8 +290,6 @@ public class ApplicationLoader extends Application {
             e.printStackTrace();
         }
 
-        LiteMode.registerBatteryReceiver();
-
         try {
             PowerManager pm = (PowerManager) ApplicationLoader.applicationContext.getSystemService(Context.POWER_SERVICE);
             isScreenOn = pm.isScreenOn();
@@ -303,7 +303,6 @@ public class ApplicationLoader extends Application {
         SharedConfig.loadConfig();
         NekoConfig.init();
         NaConfig.init();
-        LastSeenHelper.preload();
         ExteraConfig.init();
         installPluginCrashHandler();
         registerPluginLifecycleCallbacks();
@@ -311,6 +310,9 @@ public class ApplicationLoader extends Application {
         FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(!NaConfig.INSTANCE.getDisableCrashlyticsCollection().Bool());
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) { //TODO improve account
             UserConfig.getInstance(a).loadConfig();
+            if (!shouldInitAccountOnStart(a)) {
+                continue;
+            }
             MessagesController.getInstance(a);
             if (a == 0) {
                 SharedConfig.pushStringStatus = "__FIREBASE_GENERATING_SINCE_" + ConnectionsManager.getInstance(a).getCurrentTime() + "__";
@@ -333,9 +335,17 @@ public class ApplicationLoader extends Application {
         MediaController.getInstance();
         for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) { //TODO improve account
             ContactsController.getInstance(a).checkAppAccount();
-            DownloadController.getInstance(a);
+            if (shouldInitAccountOnStart(a)) {
+                DownloadController.getInstance(a);
+            }
         }
         BillingController.getInstance().startConnection();
+    }
+
+    // Unused account slots get their MessagesController/ConnectionsManager lazily (login, account
+    // switch), so don't start native network threads and handshakes for them on every cold start.
+    private static boolean shouldInitAccountOnStart(int account) {
+        return account == 0 || account == UserConfig.selectedAccount || UserConfig.getInstance(account).isClientActivated();
     }
 
     public ApplicationLoader() {
@@ -413,13 +423,8 @@ public class ApplicationLoader extends Application {
 
         applicationHandler = new Handler(applicationContext.getMainLooper());
 
-        if (NekoConfig.useOpenFreeMap.Bool()) {
-            MapLibre.getInstance(applicationContext);
-        }
-
         LauncherIconController.tryFixLauncherIconIfNeeded();
         ProxyRotationController.init();
-        ProxyPingController.init();
     }
 
     private static void installPluginCrashHandler() {
@@ -540,7 +545,25 @@ public class ApplicationLoader extends Application {
         Utilities.stageQueue.postRunnable(ApplicationLoader::startPushServiceInternal);
     }
 
+    private static void cancelLegacyPushAlarm() {
+        try {
+            PendingIntent legacy = PendingIntent.getBroadcast(applicationContext, 0,
+                    new Intent(applicationContext, NotificationsService.class),
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_NO_CREATE);
+            if (legacy != null) {
+                AlarmManager am = (AlarmManager) applicationContext.getSystemService(Context.ALARM_SERVICE);
+                if (am != null) {
+                    am.cancel(legacy);
+                }
+                legacy.cancel();
+            }
+        } catch (Throwable e) {
+            FileLog.e(e);
+        }
+    }
+
     private static void startPushServiceInternal() {
+        cancelLegacyPushAlarm();
         if (PushListenerController.getProvider().hasServices()) {
             return;
         }
@@ -565,15 +588,6 @@ public class ApplicationLoader extends Application {
                     } else {
                         applicationContext.startService(new Intent(applicationContext, NotificationsService.class));
                     }
-
-                    Log.d("TFOSS", "Trying to start push service every 10 minutes");
-                    // Telegram-FOSS: unconditionally enable push service
-                    AlarmManager am = (AlarmManager) applicationContext.getSystemService(Context.ALARM_SERVICE);
-                    Intent i = new Intent(applicationContext, NotificationsService.class);
-                    pendingIntent = PendingIntent.getBroadcast(applicationContext, 0, i, PendingIntent.FLAG_IMMUTABLE);
-
-                    am.cancel(pendingIntent);
-                    am.setInexactRepeating(AlarmManager.RTC_WAKEUP, System.currentTimeMillis(), 10 * 60 * 1000, pendingIntent);
                 } catch (Throwable e) {
                     Log.e("TFOSS", "Failed to start push service");
                 }
@@ -581,13 +595,6 @@ public class ApplicationLoader extends Application {
 
         } else AndroidUtilities.runOnUIThread(() -> {
             applicationContext.stopService(new Intent(applicationContext, NotificationsService.class));
-
-            PendingIntent pintent = PendingIntent.getService(applicationContext, 0, new Intent(applicationContext, NotificationsService.class), PendingIntent.FLAG_MUTABLE);
-            AlarmManager alarm = (AlarmManager)applicationContext.getSystemService(Context.ALARM_SERVICE);
-            alarm.cancel(pintent);
-            if (pendingIntent != null) {
-                alarm.cancel(pendingIntent);
-            }
         });
     }
 

@@ -182,6 +182,13 @@ public final class WebProxyTransport implements ForegroundDetector.Listener {
         }
     }
 
+    /** True while a WEB proxy carrier (or connection check) may be carrying traffic through a WebView. */
+    public static boolean isRunning() {
+        synchronized (staticLock) {
+            return instance != null || connectionTestInstance != null;
+        }
+    }
+
     public static int startConnectionCheck(String address, String secret, ReadyCallback readyCallback) {
         Address normalized = normalizeAddress(address);
         byte[] secretBytes = decodeSecret(secret);

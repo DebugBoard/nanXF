@@ -1243,14 +1243,15 @@ public class AnimatedEmojiDrawable extends Drawable {
             float progress = changeProgress.set(1);
             bounds.set(getBounds());
             bounds.offset(offsetX, offsetY);
-            final float particlesAlpha = this.particlesAlpha.set(hasParticles);
+            final float particlesAlpha = this.particlesAlpha.set(hasParticles && LiteMode.isEnabled(LiteMode.FLAG_PARTICLES));
             if (particlesAlpha > 0) {
                 particles.setBounds(bounds);
                 particles.process();
                 particles.draw(canvas, Theme.multAlpha(lastColor == null ? 0xFFFFFFFF : lastColor, particlesAlpha));
-                Choreographer60FpsContent.getInstance().addFrameCallback(invalidateRunnable, 15);
+                // re-armed on every draw, so it stops by itself once nothing draws this (background, offscreen)
+                Choreographer60FpsContent.getInstance().addFrameCallbackOnce(invalidateRunnable, 15);
             } else {
-                Choreographer60FpsContent.getInstance().removeFrameCallback(invalidateRunnable);
+                Choreographer60FpsContent.getInstance().removeFrameCallbackOnce(invalidateRunnable);
             }
             if (drawables[1] != null && progress < 1) {
                 drawables[1].setAlpha((int) (alpha * (1f - progress)));
@@ -1477,6 +1478,7 @@ public class AnimatedEmojiDrawable extends Drawable {
                 return;
             }
             attached = false;
+            Choreographer60FpsContent.getInstance().removeFrameCallbackOnce(invalidateRunnable);
             if (drawables[0] instanceof AnimatedEmojiDrawable) {
                 ((AnimatedEmojiDrawable) drawables[0]).removeView(this);
             }
